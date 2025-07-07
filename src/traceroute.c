@@ -1,9 +1,13 @@
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
 #include <sysexits.h>
 #include <argp.h>
+#include <string.h>
 
 #include "mod-default.h"
 #include "mod-icmp.h"
@@ -43,8 +47,14 @@ typedef struct traceroute_mode_s {
 } trc_mode;
 
 
+struct host {
+    char *name;
+    char *canonname;
+    struct sockaddr_in addr;
+};
+
 typedef struct traceroute_s {
-    char *host;
+    struct host host;
     int pkt_len;
 } traceroute;
 
@@ -91,14 +101,15 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     case ARGP_KEY_ARG:
         switch (stat->arg_num) {
         case 0:
-            trc->host = arg;
+            trc->host.name = arg;
             break;
         case 1:
             trc->pkt_len = atoi(arg);
             // TODO: Maybe check error here
             if (trc->pkt_len > MAX_PACKET_LEN) {
-                fprintf(stderr, "Error: Packet lenght too big: %d (max is %d)", trc->pkt_len,
+                fprintf(stderr, "Error: Packet lenght too big: %d (max is %d)\n", trc->pkt_len,
                         MAX_PACKET_LEN);
+                exit(EXIT_FAILURE);
             }
             break;
         default:
@@ -119,20 +130,68 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
 
 static struct argp argp = {NULL, parser, args_doc, doc};
 
+static int init_addr(struct host *host)
+{
+    int ret;
+    struct addrinfo hints = {0};
+    struct addrinfo *res, *tmp;
+
+    hints.ai_family = AF_INET;
+    //TOOD: Change this when adding other protocols
+    hints.ai_protocol = IPPROTO_UDP;
+    hints.ai_flags = AI_CANONNAME;
+
+    if (host->name ==  NULL) {
+        return -1;
+    }
+
+    ret = getaddrinfo(host->name, NULL, &hints, &res);
+    if (ret != 0) {
+        fprintf(stderr, "Error: getaddrinfo(): %d\n", ret);
+        return -1;
+    }
+
+    for (tmp = res; tmp; tmp = tmp->ai_next) {
+        if (tmp->ai_family == AF_INET) {
+            break;
+        }
+    }
+
+    if (tmp == NULL) { tmp = res; }
+
+    if (tmp->ai_addrlen > sizeof(struct sockaddr_in)) {
+        return -1;
+    }
+
+    memcpy(&host->addr, tmp->ai_addr, tmp->ai_addrlen);
+    if (tmp->ai_canonname != NULL) {
+        host->canonname = strdup(tmp->ai_canonname);
+    }
+
+    freeaddrinfo(res);
+
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
-    int c;
     mode_id id = TRC_DEFAULT;
     trc_mode mode;
     traceroute trc = {
-        .host = NULL,
+        .host = {NULL, NULL, {0}},
         .pkt_len = MAX_PACKET_LEN,
     };
 
-
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    printf("HOST: %s\nPKT_LEN: %d\n", trc.host, trc.pkt_len);
+    if (init_addr(&trc.host) != 0) {
+        fprintf(stderr, "Error: init_addr()\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Name: %s\nCanonname: %s\n", trc.host.name, trc.host.canonname);
+
+    free(trc.host.canonname);
 
     return 0;
 }

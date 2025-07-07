@@ -37,6 +37,11 @@ int def_setup_probe(probe * p, int ttl)
     return 0;
 }
 
+int def_teardown_probe()
+{
+    return 0;
+}
+
 int def_send_probe(probe * p)
 {
 
