@@ -1,15 +1,15 @@
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <sysexits.h>
+#include <argp.h>
 
 #include "mod-default.h"
+#include "mod-icmp.h"
 #include "traceroute.h"
 
-#define HELP_STRING \
-    "Usage: ft_traceroute [OPTION...] HOST ...\n"
-
+#define MAX_PACKET_LEN	65000
 
 #define DEF_START_PORT	33434	/*  start for traditional udp method   */
 #define DEF_UDP_PORT	53	/*  dns   */
@@ -25,6 +25,7 @@
 
 typedef enum mode_id_e {
     TRC_DEFAULT,
+    TRC_ICMP,
 } mode_id;
 
 typedef struct traceroute_stat_s {
@@ -43,7 +44,9 @@ typedef struct traceroute_mode_s {
 
 
 typedef struct traceroute_s {
-} trc;
+    char *host;
+    int pkt_len;
+} traceroute;
 
 
 volatile bool done = false;
@@ -62,6 +65,12 @@ static void init_mode(trc_mode * mode, mode_id id)
         mode->recv_probe = def_recv_probe;
         mode->expire_probe = def_expire_probe;
         break;
+    case TRC_ICMP:
+        mode->id = TRC_ICMP;
+        mode->send_probe = icmp_send_probe;
+        mode->recv_probe = icmp_recv_probe;
+        mode->expire_probe = icmp_expire_probe;
+        break;
     default:
         /* This should never happen */
         fprintf(stderr, "Error: mode %d does not exist\n", id);
@@ -69,27 +78,61 @@ static void init_mode(trc_mode * mode, mode_id id)
     }
 }
 
+static char doc[] = "Track packet hops over IP";
+static char args_doc[] = "HOST [PACKET_LEN]";
+
+static error_t parser(int key, char *arg, struct argp_state *stat)
+{
+    traceroute *trc;
+
+    trc = stat->input;
+
+    switch (key) {
+    case ARGP_KEY_ARG:
+        switch (stat->arg_num) {
+        case 0:
+            trc->host = arg;
+            break;
+        case 1:
+            trc->pkt_len = atoi(arg);
+            // TODO: Maybe check error here
+            if (trc->pkt_len > MAX_PACKET_LEN) {
+                fprintf(stderr, "Error: Packet lenght too big: %d (max is %d)", trc->pkt_len,
+                        MAX_PACKET_LEN);
+            }
+            break;
+        default:
+            argp_usage(stat);
+        }
+        break;
+    case ARGP_KEY_END:
+        if (stat->arg_num < 1) {
+            argp_usage(stat);
+        }
+        break;
+    default:
+        return  ARGP_ERR_UNKNOWN;
+    }
+
+    return 0;
+}
+
+static struct argp argp = {NULL, parser, args_doc, doc};
+
 int main(int argc, char** argv)
 {
     int c;
     mode_id id = TRC_DEFAULT;
     trc_mode mode;
+    traceroute trc = {
+        .host = NULL,
+        .pkt_len = MAX_PACKET_LEN,
+    };
 
-    while ((c = getopt(argc, argv, "vfi:c:p:t:?")) != -1) {
-        switch (c) {
-        case '?':
-            if (optopt && optopt != '?') {
-                exit (EX_USAGE);
-            }
-            printf(HELP_STRING);
-            exit(EXIT_SUCCESS);
-        }
-    }
 
-    if (optind >= argc) {
-        fprintf(stderr, "Specify \"host\" missing argument.");
-        exit (EX_USAGE);
-    }
+    argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    init_mode(&mode, id);
+    printf("HOST: %s\nPKT_LEN: %d\n", trc.host, trc.pkt_len);
+
+    return 0;
 }

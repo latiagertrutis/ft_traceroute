@@ -1,0 +1,4 @@
+*.o
+*.d
+ft_traceroute
+compile_commands.json

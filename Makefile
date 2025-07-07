@@ -1,8 +1,8 @@
 .PHONY: all clean distclean test re
 
-TARGET = ft_ping
+TARGET = ft_traceroute
 
-SRC = $(addprefix src/,ping.c ping_utils.c)
+SRC = $(addprefix src/,traceroute.c mod-default.c mod-icmp.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
