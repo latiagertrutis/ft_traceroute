@@ -41,20 +41,16 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
+    int (*setup_probe) (probe * p, host *host, int ttl);
     void (*send_probe) (probe *p, int ttl);
     void (*recv_probe) (void);
     void (*expire_probe) (void);
 } trc_mode;
 
 
-struct host {
-    char *name;
-    char *canonname;
-    struct sockaddr_in addr;
-};
-
 typedef struct traceroute_s {
-    struct host host;
+    host dest;
+    host src;
     int pkt_len;
 } traceroute;
 
@@ -71,6 +67,7 @@ static void init_mode(trc_mode * mode, mode_id id)
     switch (id) {
     case TRC_DEFAULT:
         mode->id = TRC_DEFAULT;
+        mode->setup_probe = def_setup_probe;
         mode->send_probe = def_send_probe;
         mode->recv_probe = def_recv_probe;
         mode->expire_probe = def_expire_probe;
@@ -101,7 +98,7 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     case ARGP_KEY_ARG:
         switch (stat->arg_num) {
         case 0:
-            trc->host.name = arg;
+            trc->dest.name = arg;
             break;
         case 1:
             trc->pkt_len = atoi(arg);
@@ -130,7 +127,7 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
 
 static struct argp argp = {NULL, parser, args_doc, doc};
 
-static int init_addr(struct host *host)
+static int init_addr(host *host)
 {
     int ret;
     struct addrinfo hints = {0};
@@ -175,23 +172,35 @@ static int init_addr(struct host *host)
 
 int main(int argc, char** argv)
 {
+    int ret = 0;
     mode_id id = TRC_DEFAULT;
     trc_mode mode;
+    probe p;
     traceroute trc = {
-        .host = {NULL, NULL, {0}},
+        .dest = {NULL, NULL, {0}},
+        .src = {NULL, NULL, {0}},
         .pkt_len = MAX_PACKET_LEN,
     };
 
+    /* Setup source address family */
+    trc.src.addr.sa_in.sin_family = AF_INET;
+
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    if (init_addr(&trc.host) != 0) {
+    if (init_addr(&trc.dest) != 0) {
         fprintf(stderr, "Error: init_addr()\n");
         exit(EXIT_FAILURE);
     }
 
-    printf("Name: %s\nCanonname: %s\n", trc.host.name, trc.host.canonname);
+    printf("Name: %s\nCanonname: %s\n", trc.dest.name, trc.dest.canonname);
 
-    free(trc.host.canonname);
+    init_mode(&mode, id);
 
-    return 0;
+    if (mode.setup_probe(&p, &trc.src, 0) < 0) {
+        ret = EXIT_FAILURE;
+    }
+
+    free(trc.dest.canonname);
+
+    return ret;
 }

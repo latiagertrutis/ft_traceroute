@@ -16,15 +16,26 @@
 
 #include "traceroute.h"
 
-static int init_socket(int fd)
+static int init_socket(int fd, host *host)
 {
-    // IP_OPTIONS is now deprecated
-    // bind socket
-    // configure fragmentation options
+    int opt;
+
+    if (bind(fd, &host->addr.sa, sizeof(host->addr)) < 0) {
+        perror("bind");
+        return -1;
+    }
+
+    /* Default for connection-less sockets is make the user handle MTU */
+    opt = IP_PMTUDISC_DONT;
+    if (setsockopt(fd, SOL_IP, IP_MTU_DISCOVER, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
     return fd;
 }
 
-int def_setup_probe(probe * p, int ttl)
+int def_setup_probe(probe * p, host *host, int ttl)
 {
     p->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (p->fd < 0) {
@@ -32,7 +43,10 @@ int def_setup_probe(probe * p, int ttl)
         return -errno;
     }
 
-
+    if (init_socket(p->fd, host) < 0) {
+        perror("init_socket");
+        return  -errno;
+    }
 
     return 0;
 }
