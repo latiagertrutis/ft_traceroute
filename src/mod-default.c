@@ -16,11 +16,13 @@
 
 #include "traceroute.h"
 
-static int init_socket(int fd, host *host)
+static int init_socket(int fd)
 {
     int opt;
+    sockaddr_any src = {0};
 
-    if (bind(fd, &host->addr.sa, sizeof(host->addr)) < 0) {
+    src.sa_in.sin_family = AF_INET;
+    if (bind(fd, &src.sa, sizeof(sockaddr_any)) < 0) {
         perror("bind");
         return -1;
     }
@@ -35,15 +37,16 @@ static int init_socket(int fd, host *host)
     return fd;
 }
 
-int def_setup_probe(probe * p, host *host, int ttl)
+int def_setup_probe(probe * p, int ttl)
 {
+    (void)ttl;
     p->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (p->fd < 0) {
         perror("socket");
         return -errno;
     }
 
-    if (init_socket(p->fd, host) < 0) {
+    if (init_socket(p->fd) < 0) {
         perror("init_socket");
         return  -errno;
     }
@@ -58,7 +61,7 @@ int def_teardown_probe()
 
 int def_send_probe(probe * p)
 {
-
+    (void)p;
     return 0;
 }
 

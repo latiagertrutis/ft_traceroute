@@ -6,7 +6,7 @@ SRC = $(addprefix src/,traceroute.c mod-default.c mod-icmp.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
-CFLAGS = -g
+CFLAGS = -g -Wall -Werror -Wextra
 
 CC = gcc
 

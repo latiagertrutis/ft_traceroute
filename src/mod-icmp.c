@@ -2,7 +2,8 @@
 
 void icmp_send_probe(probe * p, int ttl)
 {
-
+    (void) p;
+    (void) ttl;
 }
 
 void icmp_recv_probe(void)

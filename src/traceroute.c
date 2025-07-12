@@ -41,7 +41,7 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
-    int (*setup_probe) (probe * p, host *host, int ttl);
+    int (*setup_probe) (probe * p, int ttl);
     void (*send_probe) (probe *p, int ttl);
     void (*recv_probe) (void);
     void (*expire_probe) (void);
@@ -50,24 +50,24 @@ typedef struct traceroute_mode_s {
 
 typedef struct traceroute_s {
     host dest;
-    host src;
     int pkt_len;
 } traceroute;
 
 
 volatile bool done = false;
 
-static void traceroute_sigint_handler(int signal)
-{
-    done = true;
-}
+/* static void traceroute_sigint_handler(int signal) */
+/* { */
+/*     (void) signal; */
+/*     done = true; */
+/* } */
 
 static void init_mode(trc_mode * mode, mode_id id)
 {
     switch (id) {
     case TRC_DEFAULT:
         mode->id = TRC_DEFAULT;
-        mode->setup_probe = def_setup_probe;
+        mode->setup_probe  = def_setup_probe;
         mode->send_probe = def_send_probe;
         mode->recv_probe = def_recv_probe;
         mode->expire_probe = def_expire_probe;
@@ -125,7 +125,7 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     return 0;
 }
 
-static struct argp argp = {NULL, parser, args_doc, doc};
+static struct argp argp = {NULL, parser, args_doc, doc, NULL, NULL, NULL};
 
 static int init_addr(host *host)
 {
@@ -177,13 +177,9 @@ int main(int argc, char** argv)
     trc_mode mode;
     probe p;
     traceroute trc = {
-        .dest = {NULL, NULL, {0}},
-        .src = {NULL, NULL, {0}},
+        .dest = {NULL, NULL, {}},
         .pkt_len = MAX_PACKET_LEN,
     };
-
-    /* Setup source address family */
-    trc.src.addr.sa_in.sin_family = AF_INET;
 
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
@@ -196,7 +192,7 @@ int main(int argc, char** argv)
 
     init_mode(&mode, id);
 
-    if (mode.setup_probe(&p, &trc.src, 0) < 0) {
+    if (mode.setup_probe(&p, 0) < 0) {
         ret = EXIT_FAILURE;
     }
 
