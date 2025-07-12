@@ -16,11 +16,13 @@
 
 #include "traceroute.h"
 
-static int init_socket(int fd)
+static int init_socket(int fd, int ttl)
 {
     int opt;
+    int one = 1;
     sockaddr_any src = {0};
 
+    /* Bind to 0.0.0.0 */
     src.sa_in.sin_family = AF_INET;
     if (bind(fd, &src.sa, sizeof(sockaddr_any)) < 0) {
         perror("bind");
@@ -30,9 +32,35 @@ static int init_socket(int fd)
     /* Default for connection-less sockets is make the user handle MTU */
     opt = IP_PMTUDISC_DONT;
     if (setsockopt(fd, SOL_IP, IP_MTU_DISCOVER, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt");
+        perror("setsockopt [IP_MTU_DISCOVER]");
         return -1;
     }
+
+    /* Timestamp */
+    if (setsockopt(fd, SOL_SOCKET, SO_TIMESTAMP, &one, sizeof(int)) < 0) {
+        perror("setsockopt [SO_TIMESTAMP]");
+        return -1;
+    }
+
+    /* Receive Error */
+    if (setsockopt(fd, SOL_IP, IP_RECVERR, &one, sizeof(int)) < 0) {
+        perror("setsockopt [IP_RECVERR]");
+        return -1;
+    }
+
+    /* Receive TTL */
+    if (setsockopt(fd, SOL_IP, IP_RECVTTL, &one, sizeof(int)) < 0) {
+        perror("setsockopt [IP_RECVTTL]");
+        return -1;
+    }
+
+    /* Set TTL */
+    if (setsockopt(fd, SOL_IP, IP_TTL, &ttl, sizeof(int)) < 0) {
+        perror("setsockopt [IP_TTL]");
+        return -1;
+    }
+
+    /* TODO: Make non blocking socket? */
 
     return fd;
 }
@@ -46,7 +74,7 @@ int def_setup_probe(probe * p, int ttl)
         return -errno;
     }
 
-    if (init_socket(p->fd) < 0) {
+    if (init_socket(p->fd, ttl) < 0) {
         perror("init_socket");
         return  -errno;
     }
@@ -61,7 +89,7 @@ int def_teardown_probe()
 
 int def_send_probe(probe * p)
 {
-    (void)p;
+    (void) p;
     return 0;
 }
 

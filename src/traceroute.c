@@ -192,7 +192,7 @@ int main(int argc, char** argv)
 
     init_mode(&mode, id);
 
-    if (mode.setup_probe(&p, 0) < 0) {
+    if (mode.setup_probe(&p, 1) < 0) {
         ret = EXIT_FAILURE;
     }
 
