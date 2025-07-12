@@ -10,17 +10,27 @@
 /****************************************************************************/
 
 #include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <stdio.h>
 
 #include "traceroute.h"
 
-static int init_socket(int fd, int ttl)
+static int init_socket(int ttl)
 {
-    int opt;
+    int opt, fd;
     int one = 1;
     sockaddr_any src = {0};
+
+    fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        perror("socket");
+        return -1;
+    }
 
     /* Bind to 0.0.0.0 */
     src.sa_in.sin_family = AF_INET;
@@ -65,16 +75,32 @@ static int init_socket(int fd, int ttl)
     return fd;
 }
 
-int def_setup_probe(probe * p, int ttl)
+int def_init_probe(probe *p)
 {
-    (void)ttl;
-    p->fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (p->fd < 0) {
-        perror("socket");
+    size_t i;
+
+    /* Allocate the data */
+    p->data = (uint8_t *)malloc(p->data_len);
+    if (p->data == NULL) {
+        perror("malloc");
         return -errno;
     }
 
-    if (init_socket(p->fd, ttl) < 0) {
+    /* Fill the data */
+    for (i = 0; i < p->data_len; i++) {
+        p->data[i] = 0x40 + (i & 0x3f);
+    }
+
+    /* Define starting port */
+    p->port = DEF_START_PORT;
+
+    return 0;
+}
+
+int def_setup_probe(probe * p, int ttl)
+{
+    p->fd = init_socket(ttl);
+    if (p->fd < 0) {
         perror("init_socket");
         return  -errno;
     }
@@ -82,23 +108,42 @@ int def_setup_probe(probe * p, int ttl)
     return 0;
 }
 
-int def_teardown_probe()
+int def_send_probe(probe * p, sockaddr_any *dest)
 {
-    return 0;
+    ssize_t bytes;
+
+    /* Set the current probe port */
+    dest->sa_in.sin_port = htons(p->port);
+
+    bytes = sendto(p->fd, p->data, p->data_len, 0, &dest->sa, sizeof(struct sockaddr));
+    if (bytes < 0) {
+        if (errno != EMSGSIZE && errno != EHOSTUNREACH) {
+            perror("sendto");
+            return bytes;
+        }
+    }
+
+    p->port++;
+
+    /* TODO: Add to select? */
+
+    return bytes;
 }
 
-int def_send_probe(probe * p)
+void def_recv_probe(probe *p)
 {
-    (void) p;
-    return 0;
+    sockaddr_any from;
+    uint8_t buf[1280];
+    ssize_t bytes;
+    socklen_t slen = sizeof(struct sockaddr);
+
+    bytes = recvfrom(p->fd, buf, sizeof(buf), 0, &from.sa, &slen);
+
+    /* TODO: Check that received message sequence (port) is the same as the one sent */
 }
 
-void def_recv_probe(void)
+void def_expire_probe(probe *p)
 {
-
-}
-
-void def_expire_probe(void)
-{
-
+    close(p->fd);
+    free(p->data);
 }
