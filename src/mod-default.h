@@ -3,9 +3,10 @@
 
 #include "traceroute.h"
 
-int def_setup_probe(probe * p, int ttl);
-void def_send_probe(probe * p, int ttl);
-void def_recv_probe(void);
+int def_init(void);
+int def_setup_probe(int ttl);
+int def_send_probe(sockaddr_any *dest);
+int def_recv_probe(void);
 void def_expire_probe(void);
 
 #endif

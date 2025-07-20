@@ -1,0 +1,178 @@
+#include <netinet/in.h>
+#include <netinet/udp.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
+#include <stdbool.h>
+
+#include "traceroute.h"
+
+void print_message_with_metadata(const uint8_t *buffer, ssize_t length,
+                                 const struct sockaddr_in *sender_addr)
+{
+    char sender_ip[INET_ADDRSTRLEN];
+
+    if (inet_ntop(AF_INET, &(sender_addr->sin_addr), sender_ip, sizeof(sender_ip)) == NULL) {
+        perror("inet_ntop failed");
+        return;
+    }
+
+    int sender_port = ntohs(sender_addr->sin_port);
+
+    printf("Received %zd bytes\n", length);
+    printf("Message: \"%.*s\"\n", (int)length,
+           buffer);  // Safe print without assuming null-terminated
+    printf("Sender IP: %s\n", sender_ip);
+    printf("Sender Port: %d\n", sender_port);
+}
+
+void print_raw_packet_metadata(const unsigned char *buffer, ssize_t length)
+{
+    if ((size_t)length < sizeof(struct iphdr)) {
+        fprintf(stderr, "Packet too short to contain an IP header\n");
+        return;
+    }
+
+    const struct iphdr *ip_header = (const struct iphdr *)buffer;
+
+    struct in_addr src_addr = { .s_addr = ip_header->saddr };
+    struct in_addr dst_addr = { .s_addr = ip_header->daddr };
+
+    char src_ip[INET_ADDRSTRLEN];
+    char dst_ip[INET_ADDRSTRLEN];
+
+    inet_ntop(AF_INET, &src_addr, src_ip, sizeof(src_ip));
+    inet_ntop(AF_INET, &dst_addr, dst_ip, sizeof(dst_ip));
+
+    printf("=== IP Header ===\n");
+    printf("Source IP: %s\n", src_ip);
+    printf("Destination IP: %s\n", dst_ip);
+    printf("Protocol: %d\n", ip_header->protocol);
+    printf("TTL: %d\n", ip_header->ttl);
+    printf("Header Length: %d bytes\n", ip_header->ihl * 4);
+    printf("Total Length: %d bytes\n", ntohs(ip_header->tot_len));
+
+    // Check protocol is ICMP
+    if (ip_header->protocol != IPPROTO_ICMP) {
+        printf("Not an ICMP packet.\n");
+        return;
+    }
+
+    int ip_header_len = ip_header->ihl * 4;
+    if ((size_t)length < ip_header_len + sizeof(struct icmphdr)) {
+        fprintf(stderr, "Packet too short to contain full ICMP header\n");
+        return;
+    }
+
+    const struct icmphdr *icmp_header = (const struct icmphdr *)(buffer + ip_header_len);
+    printf("\n=== ICMP Header ===\n");
+    printf("Type: %d\n", icmp_header->type);
+    printf("Code: %d\n", icmp_header->code);
+    printf("Checksum: 0x%04x\n", ntohs(icmp_header->checksum));
+
+    // ICMP Error types (3, 4, 5, 11, 12)
+    if (icmp_header->type == 3 || icmp_header->type == 4 || icmp_header->type == 5 ||
+        icmp_header->type == 11 || icmp_header->type == 12) {
+        printf("\n=== ICMP Error Payload (Original Packet Header + 8 Bytes) ===\n");
+
+        const unsigned char *inner_packet = buffer + ip_header_len + sizeof(struct icmphdr);
+        size_t inner_len = length - ip_header_len - sizeof(struct icmphdr);
+
+        if (inner_len < sizeof(struct iphdr)) {
+            printf("Not enough data for inner IP header\n");
+            return;
+        }
+
+        const struct iphdr *inner_ip = (const struct iphdr *)inner_packet;
+        struct in_addr inner_src = { .s_addr = inner_ip->saddr };
+        struct in_addr inner_dst = { .s_addr = inner_ip->daddr };
+
+        char inner_src_ip[INET_ADDRSTRLEN];
+        char inner_dst_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &inner_src, inner_src_ip, sizeof(inner_src_ip));
+        inet_ntop(AF_INET, &inner_dst, inner_dst_ip, sizeof(inner_dst_ip));
+
+        printf("Original Source IP: %s\n", inner_src_ip);
+        printf("Original Destination IP: %s\n", inner_dst_ip);
+        printf("Destination IP (RAW): %d\n", inner_dst.s_addr);
+        printf("Original Protocol: %d\n", inner_ip->protocol);
+
+        // Dump first 8 bytes of original payload
+        const unsigned char *inner_payload = inner_packet + inner_ip->ihl * 4;
+        size_t payload_len = inner_len - inner_ip->ihl * 4;
+        size_t to_print = payload_len > 8 ? 8 : payload_len;
+
+        printf("First %zu bytes of original payload: ", to_print);
+        for (size_t i = 0; i < to_print; i++) {
+            printf("%02x ", inner_payload[i]);
+        }
+        printf("\n");
+    }
+    else {
+        printf("\nThis is not an ICMP error message with embedded packet.\n");
+    }
+}
+
+static bool check_icmp_packet(uint8_t *buf, size_t len, sockaddr_any *dest)
+{
+    struct icmphdr *icmp_hdr;
+    struct iphdr *orig_ip_hdr;
+    struct udphdr *orig_udp_hdr;
+
+    if (len < sizeof(struct icmphdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
+        /* Not enough space for icmp header */
+        return false;
+    }
+
+    icmp_hdr = (struct icmphdr *)buf;
+
+    /* The only types we are expecting are time exceeded and unreached port */
+    if (icmp_hdr->type != ICMP_TIME_EXCEEDED &&
+        (icmp_hdr->type != ICMP_DEST_UNREACH || icmp_hdr->code != ICMP_PORT_UNREACH)) {
+        return false;
+    }
+
+    orig_ip_hdr = (struct iphdr *)(buf + sizeof(struct icmphdr));
+    orig_udp_hdr = (struct udphdr *)(buf + sizeof(struct icmphdr) + (orig_ip_hdr->ihl << 2));
+
+    /* Check destination address and destination port are the same */
+    if (orig_ip_hdr->daddr != dest->sa_in.sin_addr.s_addr ||
+        orig_udp_hdr->dest != dest->sa_in.sin_port) {
+        return false;
+    }
+
+    return true;
+}
+
+/* Search for icmp packet */
+bool check_ip_packet(uint8_t *buf, size_t len, sockaddr_any *dest)
+{
+    struct iphdr *ip_hdr;
+    size_t hdr_len;
+
+    if (len < sizeof(struct iphdr)) {
+        /* Not enough space for ip header */
+        return false;
+    }
+
+    ip_hdr = (struct iphdr*) buf;
+    /* Translate 32-bit words to 8-bit (RFC791, 3.1) */
+    hdr_len = ip_hdr->ihl << 2;
+    if (hdr_len > sizeof(struct iphdr)) {
+        return false; // paranoia
+    }
+
+    if (ip_hdr->protocol != IPPROTO_ICMP) {
+        /* Packet is not ICMP */
+        return false;
+    }
+
+    if (check_icmp_packet(buf + hdr_len, len - hdr_len, dest) == false) {
+        return false;
+    }
+
+    return true;
+}

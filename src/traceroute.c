@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sysexits.h>
 #include <argp.h>
 #include <string.h>
@@ -41,9 +42,10 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
-    int (*setup_probe) (probe * p, int ttl);
-    void (*send_probe) (probe *p, int ttl);
-    void (*recv_probe) (void);
+    int (*init) (void);
+    int (*setup_probe) (int ttl);
+    int (*send_probe) (sockaddr_any *dest);
+    int (*recv_probe) (void);
     void (*expire_probe) (void);
 } trc_mode;
 
@@ -62,11 +64,12 @@ volatile bool done = false;
 /*     done = true; */
 /* } */
 
-static void init_mode(trc_mode * mode, mode_id id)
+static int init_mode(trc_mode * mode, mode_id id)
 {
     switch (id) {
     case TRC_DEFAULT:
         mode->id = TRC_DEFAULT;
+        mode->init  = def_init;
         mode->setup_probe  = def_setup_probe;
         mode->send_probe = def_send_probe;
         mode->recv_probe = def_recv_probe;
@@ -81,8 +84,15 @@ static void init_mode(trc_mode * mode, mode_id id)
     default:
         /* This should never happen */
         fprintf(stderr, "Error: mode %d does not exist\n", id);
-        exit(EXIT_FAILURE);
+        return -1;
     }
+
+    if (mode->init() != 0) {
+        fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
+        return -1;
+    }
+
+    return 0;
 }
 
 static char doc[] = "Track packet hops over IP";
@@ -175,7 +185,6 @@ int main(int argc, char** argv)
     int ret = 0;
     mode_id id = TRC_DEFAULT;
     trc_mode mode;
-    probe p;
     traceroute trc = {
         .dest = {NULL, NULL, {}},
         .pkt_len = MAX_PACKET_LEN,
@@ -190,12 +199,30 @@ int main(int argc, char** argv)
 
     printf("Name: %s\nCanonname: %s\n", trc.dest.name, trc.dest.canonname);
 
-    init_mode(&mode, id);
-
-    if (mode.setup_probe(&p, 1) < 0) {
+    if (init_mode(&mode, id) != 0) {
         ret = EXIT_FAILURE;
+        goto exit_clean;
     }
 
+    if (mode.setup_probe(1) < 0) {
+        ret = EXIT_FAILURE;
+        goto exit_clean_probe;
+    }
+
+    if (mode.send_probe(&trc.dest.addr) < 0) {
+        ret = EXIT_FAILURE;
+        goto exit_clean_probe;
+    }
+
+    if (mode.recv_probe() < 0) {
+        ret = EXIT_FAILURE;
+        goto exit_clean_probe;
+    }
+
+
+exit_clean_probe:
+    mode.expire_probe();
+exit_clean:
     free(trc.dest.canonname);
 
     return ret;

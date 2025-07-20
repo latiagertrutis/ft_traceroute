@@ -5,13 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct probe_s {
-    int fd;
-    uint8_t *data;
-    size_t data_len;
-    uint16_t port;
-} probe;
-
 typedef union sockaddr_u {
     struct sockaddr sa;
     struct sockaddr_in sa_in;

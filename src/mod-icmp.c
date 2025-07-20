@@ -1,14 +1,14 @@
 #include "traceroute.h"
 
-void icmp_send_probe(probe * p, int ttl)
+int icmp_send_probe(int ttl)
 {
-    (void) p;
     (void) ttl;
+    return 0;
 }
 
-void icmp_recv_probe(void)
+int icmp_recv_probe(void)
 {
-
+    return 0;
 }
 
 void icmp_expire_probe(void)
