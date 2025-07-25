@@ -8,8 +8,6 @@
 #include <netinet/ip_icmp.h>
 #include <stdbool.h>
 
-#include "traceroute.h"
-
 void print_message_with_metadata(const uint8_t *buffer, ssize_t length,
                                  const struct sockaddr_in *sender_addr)
 {
@@ -114,65 +112,4 @@ void print_raw_packet_metadata(const unsigned char *buffer, ssize_t length)
     else {
         printf("\nThis is not an ICMP error message with embedded packet.\n");
     }
-}
-
-static bool check_icmp_packet(uint8_t *buf, size_t len, sockaddr_any *dest)
-{
-    struct icmphdr *icmp_hdr;
-    struct iphdr *orig_ip_hdr;
-    struct udphdr *orig_udp_hdr;
-
-    if (len < sizeof(struct icmphdr) + sizeof(struct iphdr) + sizeof(struct udphdr)) {
-        /* Not enough space for icmp header */
-        return false;
-    }
-
-    icmp_hdr = (struct icmphdr *)buf;
-
-    /* The only types we are expecting are time exceeded and unreached port */
-    if (icmp_hdr->type != ICMP_TIME_EXCEEDED &&
-        (icmp_hdr->type != ICMP_DEST_UNREACH || icmp_hdr->code != ICMP_PORT_UNREACH)) {
-        return false;
-    }
-
-    orig_ip_hdr = (struct iphdr *)(buf + sizeof(struct icmphdr));
-    orig_udp_hdr = (struct udphdr *)(buf + sizeof(struct icmphdr) + (orig_ip_hdr->ihl << 2));
-
-    /* Check destination address and destination port are the same */
-    if (orig_ip_hdr->daddr != dest->sa_in.sin_addr.s_addr ||
-        orig_udp_hdr->dest != dest->sa_in.sin_port) {
-        return false;
-    }
-
-    return true;
-}
-
-/* Search for icmp packet */
-bool check_ip_packet(uint8_t *buf, size_t len, sockaddr_any *dest)
-{
-    struct iphdr *ip_hdr;
-    size_t hdr_len;
-
-    if (len < sizeof(struct iphdr)) {
-        /* Not enough space for ip header */
-        return false;
-    }
-
-    ip_hdr = (struct iphdr*) buf;
-    /* Translate 32-bit words to 8-bit (RFC791, 3.1) */
-    hdr_len = ip_hdr->ihl << 2;
-    if (hdr_len > sizeof(struct iphdr)) {
-        return false; // paranoia
-    }
-
-    if (ip_hdr->protocol != IPPROTO_ICMP) {
-        /* Packet is not ICMP */
-        return false;
-    }
-
-    if (check_icmp_packet(buf + hdr_len, len - hdr_len, dest) == false) {
-        return false;
-    }
-
-    return true;
 }
