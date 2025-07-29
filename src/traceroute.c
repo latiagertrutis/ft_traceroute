@@ -49,8 +49,8 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
-    int (*init) (size_t data_len, unsigned int n_probes);
-    int (*send_probe) (sockaddr_any *dest, int ttl);
+    int (*init) (sockaddr_any *dest, size_t data_len, unsigned int n_probes);
+    int (*send_probe) (int ttl);
     int (*recv_probe) (void);
     void (*expire_probe) (void);
 } trc_mode;
@@ -58,7 +58,7 @@ typedef struct traceroute_mode_s {
 
 typedef struct traceroute_s {
     host dest;
-    size_t pkt_len;
+    ssize_t pkt_len;
     unsigned int probes_per_hop;
     unsigned int sim_probes;
     unsigned int first_hop;
@@ -219,15 +219,23 @@ static int init_addr(host *host)
 
 static int trace(traceroute *trc, trc_mode *mode)
 {
-    int start = (trc->first_hop - 1) * trc->probes_per_hop;
-    int end = trc->max_hops * trc->probes_per_hop;
+    unsigned int start = (trc->first_hop - 1) * trc->probes_per_hop;
+    unsigned int end = trc->max_hops * trc->probes_per_hop;
     int ret = 0;
 
     while (start < end) {
-        if (mode->send_probe(&trc->dest.addr, 1) < 0) {
-            ret = -1;
-            goto exit_clean_probe;
+        unsigned int n;
+
+        for (n = start; n <= start + trc->sim_probes && n < end; n++) {
+            int ttl;
+
+            ttl = n / trc->probes_per_hop + 1;
+
+            /* Do not check error */
+            mode->send_probe(ttl);
         }
+
+        start = n;
 
         if (mode->recv_probe() == TRC_MSG_DROP) {
             printf("Message Drop\n");
@@ -238,7 +246,6 @@ static int trace(traceroute *trc, trc_mode *mode)
         return 0;
     }
 
-exit_clean_probe:
     mode->expire_probe();
     return ret;
 }
@@ -251,7 +258,7 @@ int main(int argc, char** argv)
     trc_mode mode;
     traceroute trc = {
         .dest = {NULL, NULL, {}},
-        .pkt_len = MAX_PACKET_LEN,
+        .pkt_len = -1,
         .probes_per_hop = DEF_PROBES_PER_HOP,
         .sim_probes = DEF_SIM_PROBES,
         .first_hop = DEF_FIRST_HOP,
@@ -260,7 +267,10 @@ int main(int argc, char** argv)
 
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    if (trc.pkt_len >= sizeof(struct iphdr)) {
+    if (trc.pkt_len < 0) {
+        data_len = DEF_DATA_LEN - sizeof(struct iphdr);
+    }
+    else if (trc.pkt_len >= (ssize_t)sizeof(struct iphdr)) {
         data_len = trc.pkt_len - sizeof(struct iphdr);
     }
 
@@ -276,7 +286,7 @@ int main(int argc, char** argv)
         goto exit_clean;
     }
 
-    if (mode.init(data_len, trc.probes_per_hop * trc.max_hops) != 0) {
+    if (mode.init(&trc.dest.addr, data_len, trc.probes_per_hop * trc.max_hops) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
         goto exit_clean;

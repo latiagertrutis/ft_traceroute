@@ -29,10 +29,17 @@
 
 /* TODO: If this is common, move it to a header */
 
+typedef enum {
+    STAT_UNSENT,
+    STAT_SENT,
+    STAT_DONE
+} socket_status;
+
 struct probes {
-    int *fd;
-    unsigned int n_probes;
+    int fd;
     int fd_err;
+    socket_status *stat;
+    unsigned int n_probes;
     sockaddr_any *dest;
     uint8_t *data;
     size_t data_len;
@@ -43,34 +50,17 @@ struct probes {
 /* TODO: Check if it is going to be re-used so it needs to be malloc in init */
 static struct probes p = {0};
 
-static int init_tx_socket(unsigned int idx, int ttl)
+static int init_tx_socket(void)
 {
-    int *fd;
-
-    if (idx >= p.n_probes) {
-        return -1;
-    }
-
-    fd = &p.fd[idx];
-    *fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (*fd < 0) {
+    p.fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (p.fd < 0) {
         perror("socket (udp)");
         return -1;
-    }
-
-    /* Set TTL */
-    if (setsockopt(*fd, SOL_IP, IP_TTL, &ttl, sizeof(int)) < 0) {
-        perror("setsockopt [IP_TTL]");
-        goto error;
     }
 
     /* TODO: Make non blocking socket? */
 
     return 0;
-
-error:
-    close(*fd);
-    return -1;
 }
 
 static int init_rx_socket(void)
@@ -110,15 +100,27 @@ error:
     return -1;
 }
 
+static int set_ttl(int ttl)
+{
+    /* Set TTL */
+    if (setsockopt(p.fd, SOL_IP, IP_TTL, &ttl, sizeof(int)) < 0) {
+        perror("setsockopt [IP_TTL]");
+        return -1;
+    }
+
+    return 0;
+}
+
 /* TODO: To avoid early optimization, n_probes is used, the idea is to use only
  * the ammount of probes that will be in air simultaneously. Each probe will be
  * identified by its index in the array, and the index will be
  * current_port - default port.Optimize once is ready */
-int def_init(size_t data_len, unsigned int n_probes)
+int def_init(sockaddr_any *dest, size_t data_len, unsigned int n_probes)
 {
     size_t i;
     int ret = 0;
 
+    p.dest = dest;
     p.data_len = data_len;
     p.n_probes = n_probes;
     /* Allocate the data */
@@ -140,63 +142,64 @@ int def_init(size_t data_len, unsigned int n_probes)
     /* Define starting port */
     p.port = DEF_START_PORT;
 
-    /* Allocate file descriptors for the simultaneous messages in air */
+    /* Allocate the done flags for simultaneous messages in air */
     /* TODO: Free this memory at the end of the program */
-    printf("Try allocate %ld\n", sizeof(int) * n_probes);
-    p.fd = (int *)malloc(sizeof(int) * n_probes);
-    if (p.data == NULL) {
+    p.stat = (socket_status *)malloc(sizeof(socket_status) * n_probes);
+    if (p.stat == NULL) {
         perror("malloc");
         ret = -1;
         goto error_data;
     }
 
     for (i = 0; i < n_probes; i++) {
-        p.fd[i] = -1;
+        p.stat[i] = STAT_UNSENT;
+    }
+
+    /* Init the transsmission socket. Dgram socket for sending udp packages */
+    init_tx_socket();
+    if (p.fd < 0) {
+        return  -errno;
     }
 
     /* Raw socket for reception of icmp error messages */
     init_rx_socket();
     if (p.fd_err < 0) {
         ret = -1;
-        goto error_fd;
+        goto error_done;
     }
 
     return ret;
 
-error_fd:
-    free(p.fd);
+error_done:
+    free(p.stat);
 error_data:
     free(p.data);
     return ret;
 }
 
 
-int def_send_probe(sockaddr_any *dest, int ttl)
+int def_send_probe(int ttl)
 {
     ssize_t bytes;
-    unsigned int idx = p.port - DEF_START_PORT;
+    /* unsigned int idx = p.port - DEF_START_PORT; */
 
-    /* Init the probe socket firs. Dgram socket for sending udp packages */
-    init_tx_socket(idx, ttl);
-    if (p.fd[idx] < 0) {
-        return  -errno;
+    if (set_ttl(ttl) != 0) {
+        return  -1;
     }
 
-    printf("Send to: %d\n", dest->sa_in.sin_addr.s_addr);
+    printf("Send to: %d\n", p.dest->sa_in.sin_addr.s_addr);
     /* Set the current probe port */
-    dest->sa_in.sin_port = htons(p.port);
+    p.dest->sa_in.sin_port = htons(p.port);
 
-    bytes = sendto(p.fd[idx], p.data, p.data_len, 0, &dest->sa, sizeof(struct sockaddr));
+    bytes = sendto(p.fd, p.data, p.data_len, 0, &p.dest->sa, sizeof(struct sockaddr));
     if (bytes < 0) {
         if (errno != EMSGSIZE && errno != EHOSTUNREACH) {
             perror("sendto");
             return bytes;
         }
     }
-    p.dest = dest;
+    p.stat[DEF_START_PORT - p.port] = STAT_SENT;
     p.port++;
-
-    /* TODO: Add to select? */
 
     return bytes;
 }
@@ -243,18 +246,22 @@ msg_status def_recv_probe(void)
 
     /* Check that the port matches (i.e. the index of fds have a valid fd) */
     port = ntohs(orig_udp_hdr->dest);
-    printf("Fd in position %d is: %d\n", port, p.fd[port - DEF_START_PORT]);
+    printf("stat in position %d is: %d\n", port - DEF_START_PORT, p.stat[port - DEF_START_PORT]);
     if (port < DEF_START_PORT ||
         port >= DEF_START_PORT + p.n_probes ||
-        p.fd[port - DEF_START_PORT] < 0) {
+        p.stat[port - DEF_START_PORT] != STAT_SENT) {
         printf("drop in port\n");
         return TRC_MSG_DROP;
     }
 
+    /* From here on, we now the message is for us, so will be no longer dropped
+     * and we ca say the probe is done */
+    /* TODO: check the need of done status in probe, prbably needed for timeout */
+    p.stat[port - DEF_START_PORT] = STAT_DONE;
+
     return  check_icmp_type(icmp_hdr->type, icmp_hdr->code);
 }
 
-void def_expire_probe(unsigned int idx)
+void def_expire_probe()
 {
-    close(p.fd[idx]);
 }
