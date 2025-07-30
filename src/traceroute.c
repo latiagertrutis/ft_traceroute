@@ -15,6 +15,7 @@
 #include "mod-default.h"
 #include "mod-icmp.h"
 #include "traceroute.h"
+#include "probe.h"
 
 #define MAX_PACKET_LEN	65000
 #define DEF_PROBES_PER_HOP 3
@@ -49,9 +50,9 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
-    int (*init) (sockaddr_any *dest, size_t data_len, unsigned int n_probes);
-    int (*send_probe) (int ttl);
-    int (*recv_probe) (void);
+    int (*init) (sockaddr_any *dest, size_t data_len);
+    int (*send_probe) (struct probes *ps, int ttl);
+    int (*recv_probe) (struct probes *ps, int timeout, unsigned int n_probes);
     void (*expire_probe) (void);
 } trc_mode;
 
@@ -59,6 +60,7 @@ typedef struct traceroute_mode_s {
 typedef struct traceroute_s {
     host dest;
     ssize_t pkt_len;
+    struct probes *probes;
     unsigned int probes_per_hop;
     unsigned int sim_probes;
     unsigned int first_hop;
@@ -237,11 +239,11 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         start = n;
 
-        if (mode->recv_probe() == TRC_MSG_DROP) {
-            printf("Message Drop\n");
+        if (mode->recv_probe(5, trc->sim_probes) == 0) {
+            printf("Probe not finished!\n");
         }
         else {
-            printf("Message OK\n");
+            printf("Probe Finished!\n");
         }
         return 0;
     }
@@ -279,25 +281,34 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
+    trc.probes = init_probes(trc.max_hops, trc.probes_per_hop);
+    if (trc.probes == NULL) {
+        fprintf(stderr, "Error: init_addr()\n");
+        ret = EXIT_FAILURE;
+        goto exit_addr;
+    }
+
     printf("Name: %s\nCanonname: %s\n", trc.dest.name, trc.dest.canonname);
 
     if (init_mode(&mode, id) != 0) {
         ret = EXIT_FAILURE;
-        goto exit_clean;
+        goto exit_probes;
     }
 
-    if (mode.init(&trc.dest.addr, data_len, trc.probes_per_hop * trc.max_hops) != 0) {
+    if (mode.init(&trc.dest.addr, data_len) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
-        goto exit_clean;
+        goto exit_probes;
     }
 
     if (trace(&trc, &mode) != 0) {
         ret = EXIT_FAILURE;
-        goto exit_clean;
+        goto exit_probes;
     }
 
-exit_clean:
+exit_probes:
+    deinit_probes(trc.probes);
+exit_addr:
     free(trc.dest.canonname);
 
     return ret;
