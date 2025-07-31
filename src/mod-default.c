@@ -276,6 +276,8 @@ static int recv_probe(struct probes *ps, struct probe_range range)
         printf("Message Final\n");
         return 1;
     }
+
+    return 0;
 }
 
 /* TODO: We do not want to see if every probe has a response, is one of the porbes of a given hop (3 probes) is answered this is enough, so we should be waiting  hops not porbes. The only linear variable is the port, some probes may not be responded, but if one in the hop is, the hop is done. */
@@ -283,10 +285,10 @@ static int recv_probe(struct probes *ps, struct probe_range range)
 /* If final probe is read matk probes as done, oterwise, return last pos. Pos can be greater than range.max since the last probe in the range can validate its hop which can contain more probes. If that is the case the next iteration should start from the next hop. */
 int def_recv_probe(struct probes *ps, int timeout, struct probe_range range)
 {
-    int nfds, ready;
+    int nfds, ready, ret;
     fd_set readfds;
     struct timeval tim;
-    unsigned int ret, pos;
+    unsigned int pos;
 
     nfds = data.fd_err + 1;
     pos = range.min;

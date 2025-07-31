@@ -9,15 +9,11 @@ struct probe {
     struct timeval recv_time;
 };
 
-struct hop {
-    bool done;
-    struct probe *p;
-};
-
 /* TODO: continue here, put probes in trace and pass them to the modules. */
 struct probes {
     bool done;
-    struct hop *h;
+    unsigned int n_probes;
+    struct probe *p;
 };
 
 struct probe_range {
@@ -25,7 +21,7 @@ struct probe_range {
     unsigned int max;
 };
 
-struct probes *init_probes(unsigned int n_hops, unsigned int probes_per_hop);
+struct probes *init_probes(unsigned int n_probes);
 void deinit_probes(struct probes *ps);
 struct probe *get_probe(struct probes *ps, unsigned int idx);
 

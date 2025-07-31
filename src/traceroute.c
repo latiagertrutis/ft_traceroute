@@ -28,6 +28,7 @@
 #define DEF_TCP_PORT	80	/*  web   */
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 /* Ping options */
 #define OPT_VERBOSE		0x01
@@ -52,7 +53,7 @@ typedef struct traceroute_mode_s {
     mode_id id;
     int (*init) (sockaddr_any *dest, size_t data_len);
     int (*send_probe) (struct probes *ps, int ttl);
-    int (*recv_probe) (struct probes *ps, int timeout, unsigned int n_probes);
+    int (*recv_probe) (struct probes *ps, int timeout, struct probe_range range);
     void (*expire_probe) (void);
 } trc_mode;
 
@@ -60,7 +61,6 @@ typedef struct traceroute_mode_s {
 typedef struct traceroute_s {
     host dest;
     ssize_t pkt_len;
-    struct probes *probes;
     unsigned int probes_per_hop;
     unsigned int sim_probes;
     unsigned int first_hop;
@@ -219,34 +219,58 @@ static int init_addr(host *host)
     return 0;
 }
 
+static void print_probes(struct probes *ps, struct probe_range range)
+{
+    (void)ps;
+    (void)range;
+}
+
 static int trace(traceroute *trc, trc_mode *mode)
 {
     unsigned int start = (trc->first_hop - 1) * trc->probes_per_hop;
     unsigned int end = trc->max_hops * trc->probes_per_hop;
     int ret = 0;
+    struct probes *ps;
+
+    /* TODO: if probes is not used in this level it can be ofuscated in module level */
+    ps = init_probes(trc->max_hops * trc->probes_per_hop);
+    if (ps == NULL) {
+        /* TODO: free probes at end */
+        return -1;
+    }
 
     while (start < end) {
         unsigned int n;
+        struct probe_range range = {
+            .min = start,
+            .max = MIN(start + trc->sim_probes, end)
+        };
 
-        for (n = start; n <= start + trc->sim_probes && n < end; n++) {
-            int ttl;
-
-            ttl = n / trc->probes_per_hop + 1;
+        for (n = range.min; n < range.max; n++) {
+            int ttl = n / trc->probes_per_hop + 1;
 
             /* Do not check error */
-            mode->send_probe(ttl);
+            mode->send_probe(ps, ttl);
         }
 
         start = n;
 
-        if (mode->recv_probe(5, trc->sim_probes) == 0) {
+        if (mode->recv_probe(ps, 5, range) > 0) {
             printf("Probe not finished!\n");
         }
         else {
             printf("Probe Finished!\n");
         }
-        return 0;
+
+        print_probes(ps, range);
+
+        if (ps->done == true) {
+            start = end;
+            continue;
+        }
     }
+
+    deinit_probes(ps);
 
     mode->expire_probe();
     return ret;
@@ -281,33 +305,24 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    trc.probes = init_probes(trc.max_hops, trc.probes_per_hop);
-    if (trc.probes == NULL) {
-        fprintf(stderr, "Error: init_addr()\n");
-        ret = EXIT_FAILURE;
-        goto exit_addr;
-    }
-
     printf("Name: %s\nCanonname: %s\n", trc.dest.name, trc.dest.canonname);
 
     if (init_mode(&mode, id) != 0) {
         ret = EXIT_FAILURE;
-        goto exit_probes;
+        goto exit_addr;
     }
 
     if (mode.init(&trc.dest.addr, data_len) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
-        goto exit_probes;
+        goto exit_addr;
     }
 
     if (trace(&trc, &mode) != 0) {
         ret = EXIT_FAILURE;
-        goto exit_probes;
+        goto exit_addr;
     }
 
-exit_probes:
-    deinit_probes(trc.probes);
 exit_addr:
     free(trc.dest.canonname);
 
