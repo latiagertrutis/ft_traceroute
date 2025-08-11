@@ -255,16 +255,12 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         start = n;
 
-        if (mode->recv_probe(ps, 5, range) > 0) {
-            printf("Probe not finished!\n");
-        }
-        else {
-            printf("Probe Finished!\n");
-        }
+        mode->recv_probe(ps, 5, range);
 
         print_probes(ps, range);
 
         if (ps->done == true) {
+            printf("Trace Done!\n");
             start = end;
             continue;
         }
