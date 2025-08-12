@@ -25,7 +25,7 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
 
-#include "traceroute.h"
+
 #include "probe.h"
 #include "utils.h"
 #include "ip_utils.h"
@@ -120,7 +120,6 @@ int def_init(sockaddr_any *dest, size_t data_len)
     /* Allocate the data */
     /* TODO: Free this memory at the end of the program */
     if (data_len > 0) {
-        printf("Try allocate %ld\n", data_len);
         data.data = (uint8_t *)malloc(data_len);
         if (data.data == NULL) {
             perror("malloc");
@@ -203,7 +202,7 @@ static int recv_probe(struct probes *ps, struct probe_range range)
     unsigned int port, idx;
     socklen_t slen = sizeof(struct sockaddr);
     struct icmphdr *icmp_hdr;
-    struct iphdr *orig_ip_hdr;
+    struct iphdr *ip_hdr, *orig_ip_hdr;
     struct udphdr *orig_udp_hdr;
     struct probe *p;
 
@@ -215,6 +214,8 @@ static int recv_probe(struct probes *ps, struct probe_range range)
     }
 
     /* print_raw_packet_metadata(buf, bytes); */
+
+    ip_hdr = (struct iphdr *) buf;
 
     /* We received a raw message, ip header will preceed the icmp package. Check
      * that space fits what we are expecting and get the start of the icmp package */
@@ -255,25 +256,29 @@ static int recv_probe(struct probes *ps, struct probe_range range)
     /* Mark reception of message */
     gettimeofday(&p->recv_time, NULL);
 
+    /* Store sender address */
+    p->sa.sa.sa_family = AF_INET;
+    p->sa.sa_in.sin_addr.s_addr = ip_hdr->saddr;
+
     switch (check_icmp_type(icmp_hdr->type, icmp_hdr->code)) {
     case TRC_MSG_DROP:
         /* TODO: print something? */
-        printf("Message Drop\n");
+        /* printf("Message Drop\n"); */
         return 0;
     case TRC_MSG_ERROR:
         /* TODO: print something? */
-        printf("Message Error\n");
+        /* printf("Message Error\n"); */
         /* TRC_MSG_ERROR means that probe is for us but icmp code is not what
          * we expect, so, probe is done but hop is not */
         return 1; // increase one pos
     case TRC_MSG_TTL:
         /* TODO: print something? */
-        printf("Message TTL\n");
+        /* printf("Message TTL\n"); */
         return 1; // increase one pos
     case TRC_MSG_FINAL:
         /* TODO: print something? */
         ps->done = true;
-        printf("Message Final\n");
+        /* printf("Message Final\n"); */
         return 1;
     }
 
@@ -307,7 +312,6 @@ int def_recv_probe(struct probes *ps, int timeout, struct probe_range range)
 
         if (ready == 0) {
             /* timeout */
-            printf("Message Timeout Reception\n");
             /* If timeout occured,  probes in this range will not have a recv_time, meaning they are expired. Return the max position reached. If this position is less than the max we know there are some timeouts */
             return pos;
         }

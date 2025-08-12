@@ -1,3 +1,4 @@
+#include <bits/types/struct_timeval.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
 #include <stddef.h>
@@ -7,6 +8,9 @@
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <stdbool.h>
+
+#define MILIS_PER_SECOND 1000.0
+#define USEC_PER_MILIS 1000.0
 
 void print_message_with_metadata(const uint8_t *buffer, ssize_t length,
                                  const struct sockaddr_in *sender_addr)
@@ -112,4 +116,14 @@ void print_raw_packet_metadata(const unsigned char *buffer, ssize_t length)
     else {
         printf("\nThis is not an ICMP error message with embedded packet.\n");
     }
+}
+
+double timeval_to_ms(struct timeval t)
+{
+    return (double)t.tv_sec * MILIS_PER_SECOND + (double)t.tv_usec / USEC_PER_MILIS;
+}
+
+double diff_timeval(struct timeval start, struct timeval finish)
+{
+    return timeval_to_ms(finish) - timeval_to_ms(start);
 }

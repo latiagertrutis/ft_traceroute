@@ -1,7 +1,7 @@
 #ifndef MOD_DEFAULT_H
 #define MOD_DEFAULT_H
 
-#include "traceroute.h"
+#include "ip_utils.h"
 #include "probe.h"
 
 int def_init(sockaddr_any *dest, size_t data_len);

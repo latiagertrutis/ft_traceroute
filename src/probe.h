@@ -4,9 +4,12 @@
 #include <stdbool.h>
 #include <sys/time.h>
 
+#include "ip_utils.h"
+
 struct probe {
     struct timeval sent_time;
     struct timeval recv_time;
+    sockaddr_any sa;
 };
 
 /* TODO: continue here, put probes in trace and pass them to the modules. */

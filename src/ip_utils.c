@@ -1,10 +1,13 @@
+#include <netinet/in.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "ip_utils.h"
+
 
 /* Check for the expected ICMP error codes. The only case this is not the last
  * probe is when type is time exceeded and it has exeeded because of the ttl.
@@ -101,4 +104,18 @@ uint8_t *get_icmp_packet(uint8_t *buf, size_t len)
     }
 
     return buf + hdr_len;
+}
+
+
+bool equal_addr(const sockaddr_any *a, const sockaddr_any *b)
+{
+    if (a == NULL || b == NULL || a->sa.sa_family == 0) {
+        return false;
+    }
+
+    if (a->sa.sa_family != b->sa.sa_family) {
+        return false;
+    }
+
+    return !memcmp(&a->sa_in.sin_addr, &b->sa_in.sin_addr, sizeof(struct in_addr));
 }

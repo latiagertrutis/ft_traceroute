@@ -15,8 +15,9 @@
 #include "ip_utils.h"
 #include "mod-default.h"
 #include "mod-icmp.h"
-#include "traceroute.h"
+
 #include "probe.h"
+#include "utils.h"
 
 #define MAX_PACKET_LEN	65000
 #define DEF_PROBES_PER_HOP 3
@@ -220,23 +221,71 @@ static int init_addr(host *host)
     return 0;
 }
 
-static void print_header(traceroute *trc)
+static char *addr2str(sockaddr_any *addr)
 {
-    char addr_buf[INET_ADDRSTRLEN];
-
+    static char addr_buf[INET_ADDRSTRLEN]; // NULL
     /* Get string of the address name */
-    getnameinfo(&trc->dest.addr.sa, sizeof(struct sockaddr),
+    getnameinfo(&addr->sa, sizeof(struct sockaddr),
                 addr_buf, sizeof(addr_buf), 0, 0, NI_NUMERICHOST);
 
-    printf ("traceroute to %s (%s), %u hops max, %zu byte packets\n",
-            trc->dest.canonname, addr_buf, trc->max_hops, trc->pkt_len);
+    return addr_buf;
+}
+
+static void print_header(traceroute *trc)
+{
+
+    printf ("traceroute to %s (%s), %u hops max, %zu byte packets",
+            trc->dest.canonname, addr2str(&trc->dest.addr), trc->max_hops, trc->pkt_len);
     fflush (stdout);
 }
 
-static void print_probes(struct probes *ps, struct probe_range range)
+static void print_addr(sockaddr_any *addr)
 {
-    (void)ps;
-    (void)range;
+    char addr_buf[1024] = {};
+    char *str;
+
+    if (addr->sa.sa_family == 0) {
+        return;
+    }
+
+    /* TODO: add skip FQDN resolution flag */
+    str = addr2str(addr);
+    getnameinfo(&addr->sa, sizeof(struct sockaddr),
+                addr_buf, sizeof(addr_buf), 0, 0, NI_NOFQDN);
+    printf (" %s (%s)", addr_buf[0] ? addr_buf : str, str);
+}
+
+/* Print a probe range */
+static void print_probes(struct probes *ps, struct probe_range range, int probes_per_hop)
+{
+    static sockaddr_any *prev_addr = NULL;
+
+    for (unsigned int i = range.min; i < range.max; i++) {
+        unsigned int ttl = i / probes_per_hop + 1;
+        unsigned int probe_module = i % probes_per_hop;
+        struct probe *p;
+
+        p = get_probe(ps, i);
+
+        if (probe_module == 0) {
+            printf("\n%2u ", ttl);
+        }
+
+        if (p->sa.sa.sa_family == 0) {
+            printf (" *");
+            continue;
+        }
+
+        if (probe_module == 0 ||
+            equal_addr(&p->sa, prev_addr) == false) {
+            print_addr(&p->sa);
+        }
+
+        /* If sa_family != 0 means that there has been a response */
+        printf ("  %.3f ms", diff_timeval(p->sent_time, p->recv_time));
+
+        prev_addr = &p->sa;
+    }
 }
 
 static int trace(traceroute *trc, trc_mode *mode)
@@ -273,10 +322,9 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         mode->recv_probe(ps, 5, range);
 
-        print_probes(ps, range);
+        print_probes(ps, range, trc->probes_per_hop);
 
         if (ps->done == true) {
-            printf("Trace Done!\n");
             start = end;
             continue;
         }
@@ -318,8 +366,6 @@ int main(int argc, char** argv)
         fprintf(stderr, "Error: init_addr()\n");
         exit(EXIT_FAILURE);
     }
-
-    printf("Name: %s\nCanonname: %s\n", trc.dest.name, trc.dest.canonname);
 
     if (init_mode(&mode, id) != 0) {
         ret = EXIT_FAILURE;
