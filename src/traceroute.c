@@ -1,6 +1,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/udp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -219,6 +220,19 @@ static int init_addr(host *host)
     return 0;
 }
 
+static void print_header(traceroute *trc)
+{
+    char addr_buf[INET_ADDRSTRLEN];
+
+    /* Get string of the address name */
+    getnameinfo(&trc->dest.addr.sa, sizeof(struct sockaddr),
+                addr_buf, sizeof(addr_buf), 0, 0, NI_NUMERICHOST);
+
+    printf ("traceroute to %s (%s), %u hops max, %zu byte packets\n",
+            trc->dest.canonname, addr_buf, trc->max_hops, trc->pkt_len);
+    fflush (stdout);
+}
+
 static void print_probes(struct probes *ps, struct probe_range range)
 {
     (void)ps;
@@ -238,6 +252,8 @@ static int trace(traceroute *trc, trc_mode *mode)
         /* TODO: free probes at end */
         return -1;
     }
+
+    print_header(trc);
 
     while (start < end) {
         unsigned int n;
@@ -290,10 +306,12 @@ int main(int argc, char** argv)
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
     if (trc.pkt_len < 0) {
-        data_len = DEF_DATA_LEN - sizeof(struct iphdr);
+        /* TODO: Move sizeof(struct udphdr) to specific moduele, add a variable of header lenght to manage icmp case which will have no udp header */
+        data_len = DEF_DATA_LEN - sizeof(struct udphdr);
+        trc.pkt_len = sizeof(struct iphdr) + sizeof(struct udphdr) + data_len;
     }
-    else if (trc.pkt_len >= (ssize_t)sizeof(struct iphdr)) {
-        data_len = trc.pkt_len - sizeof(struct iphdr);
+    else if (trc.pkt_len >= (ssize_t)(sizeof(struct iphdr) + sizeof(struct udphdr))) {
+        data_len = trc.pkt_len - sizeof(struct iphdr) - sizeof(struct udphdr);
     }
 
     if (init_addr(&trc.dest) != 0) {
