@@ -11,6 +11,7 @@
 #include <sysexits.h>
 #include <argp.h>
 #include <string.h>
+#include <signal.h>
 
 #include "ip_utils.h"
 #include "mod-default.h"
@@ -56,7 +57,7 @@ typedef struct traceroute_mode_s {
     int (*init) (sockaddr_any *dest, size_t data_len);
     int (*send_probe) (struct probes *ps, int ttl);
     int (*recv_probe) (struct probes *ps, int timeout, struct probe_range range);
-    void (*expire_probe) (void);
+    void (*clean) (void);
 } trc_mode;
 
 
@@ -76,7 +77,7 @@ static int init_addr(host *host);
 static int init_mode(trc_mode * mode, mode_id id);
 
 /* Globals */
-volatile bool done = false;
+volatile bool isr_done = false;
 
 /* Statics */
 static char doc[] = "Track packet hops over IP";
@@ -89,11 +90,11 @@ static struct argp_option options[] = {
 };
 static struct argp argp = {options, parser, args_doc, doc, NULL, NULL, NULL};
 
-/* static void traceroute_sigint_handler(int signal) */
-/* { */
-/*     (void) signal; */
-/*     done = true; */
-/* } */
+static void traceroute_sigint_handler(int signal)
+{
+    (void) signal;
+    isr_done = true;
+}
 
 static int init_mode(trc_mode * mode, mode_id id)
 {
@@ -103,7 +104,7 @@ static int init_mode(trc_mode * mode, mode_id id)
         mode->init  = def_init;
         mode->send_probe = def_send_probe;
         mode->recv_probe = def_recv_probe;
-        mode->expire_probe = def_expire_probe;
+        mode->clean = def_clean;
         break;
     /* case TRC_ICMP: */
     /*     mode->id = TRC_ICMP; */
@@ -304,6 +305,8 @@ static int trace(traceroute *trc, trc_mode *mode)
 
     print_header(trc);
 
+    signal(SIGINT, traceroute_sigint_handler);
+
     while (start < end) {
         unsigned int n;
         struct probe_range range = {
@@ -324,15 +327,14 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         print_probes(ps, range, trc->probes_per_hop);
 
-        if (ps->done == true) {
-            start = end;
+        if (ps->done == true || isr_done == true) {
+            start = end; // Finish
             continue;
         }
     }
 
     deinit_probes(ps);
 
-    mode->expire_probe();
     return ret;
 }
 
@@ -375,14 +377,16 @@ int main(int argc, char** argv)
     if (mode.init(&trc.dest.addr, data_len) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
-        goto exit_addr;
+        goto exit_mode;
     }
 
     if (trace(&trc, &mode) != 0) {
         ret = EXIT_FAILURE;
-        goto exit_addr;
+        goto exit_mode;
     }
 
+exit_mode:
+    mode.clean();
 exit_addr:
     free(trc.dest.canonname);
 

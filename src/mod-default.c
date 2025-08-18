@@ -156,6 +156,12 @@ error_data:
     return ret;
 }
 
+void def_clean()
+{
+    free(data.data);
+    close(data.fd);
+    close(data.fd_err);
+}
 
 int def_send_probe(struct probes * ps, int ttl)
 {
@@ -330,8 +336,4 @@ int def_recv_probe(struct probes *ps, int timeout, struct probe_range range)
     }
 
     return pos;
-}
-
-void def_expire_probe()
-{
 }
