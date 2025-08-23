@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "ip_utils.h"
 
@@ -118,4 +119,15 @@ bool equal_addr(const sockaddr_any *a, const sockaddr_any *b)
     }
 
     return !memcmp(&a->sa_in.sin_addr, &b->sa_in.sin_addr, sizeof(struct in_addr));
+}
+
+int set_ttl(int fd, int ttl)
+{
+    /* Set TTL */
+    if (setsockopt(fd, SOL_IP, IP_TTL, &ttl, sizeof(int)) < 0) {
+        perror("setsockopt [IP_TTL]");
+        return -1;
+    }
+
+    return 0;
 }

@@ -28,4 +28,5 @@ typedef enum msg_status_e {
 uint8_t *get_icmp_packet(uint8_t *buf, size_t len);
 msg_status check_icmp_type(int type, int code);
 bool equal_addr(const sockaddr_any *a, const sockaddr_any *b);
+int set_ttl(int fd, int ttl);
 #endif
