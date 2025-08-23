@@ -33,11 +33,12 @@
 /* TODO: If this is common, move it to a header */
 
 struct def_data {
-    int fd;
-    int fd_err;
+    int fd_tx;
+    int fd_rx;
     sockaddr_any *dest;
     uint8_t *data;
     size_t data_len;
+    int last_ttl;
     uint16_t port; // Next port to use
 };
 
@@ -47,8 +48,8 @@ static struct def_data data = {0};
 
 static int init_tx_socket(void)
 {
-    data.fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (data.fd < 0) {
+    data.fd_tx = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (data.fd_tx < 0) {
         perror("socket (udp)");
         return -1;
     }
@@ -64,15 +65,15 @@ static int init_rx_socket(void)
     /* int one = 1; */
     sockaddr_any src = {0};
 
-    data.fd_err = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (data.fd_err < 0) {
+    data.fd_rx = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (data.fd_rx < 0) {
         perror("socket (raw)");
         return -1;
     }
 
     /* Bind to 0.0.0.0 */
     src.sa_in.sin_family = AF_INET;
-    if (bind(data.fd_err, &src.sa, sizeof(sockaddr_any)) < 0) {
+    if (bind(data.fd_rx, &src.sa, sizeof(sockaddr_any)) < 0) {
         perror("bind");
         goto error;
     }
@@ -91,19 +92,8 @@ static int init_rx_socket(void)
     return 0;
 
 error:
-    close(data.fd_err);
+    close(data.fd_rx);
     return -1;
-}
-
-static int set_ttl(int ttl)
-{
-    /* Set TTL */
-    if (setsockopt(data.fd, SOL_IP, IP_TTL, &ttl, sizeof(int)) < 0) {
-        perror("setsockopt [IP_TTL]");
-        return -1;
-    }
-
-    return 0;
 }
 
 /* TODO: To avoid early optimization, n_probes is used, the idea is to use only
@@ -137,20 +127,22 @@ int def_init(sockaddr_any *dest, size_t data_len)
 
     /* Init the transsmission socket. Dgram socket for sending udp packages */
     init_tx_socket();
-    if (data.fd < 0) {
+    if (data.fd_tx < 0) {
         ret = -1;
         goto error_data;
     }
 
     /* Raw socket for reception of icmp error messages */
     init_rx_socket();
-    if (data.fd_err < 0) {
+    if (data.fd_rx < 0) {
         ret = -1;
-        goto error_data;
+        goto error_fd_tx;
     }
 
     return ret;
 
+error_fd_tx:
+    close(data.fd_tx);
 error_data:
     free(data.data);
     return ret;
@@ -159,8 +151,8 @@ error_data:
 void def_clean()
 {
     free(data.data);
-    close(data.fd);
-    close(data.fd_err);
+    close(data.fd_tx);
+    close(data.fd_rx);
 }
 
 int def_send_probe(struct probes * ps, int ttl)
@@ -169,15 +161,19 @@ int def_send_probe(struct probes * ps, int ttl)
     struct probe *p;
     /* unsigned int idx = p.port - DEF_START_PORT; */
 
-    if (set_ttl(ttl) != 0) {
-        return  -1;
+    if (ttl != data.last_ttl) {
+        if (set_ttl(data.fd_tx, ttl) != 0) {
+            return  -1;
+        }
+        data.last_ttl = ttl;
     }
+
 
     /* printf("Send to: %d\n", p.dest->sa_in.sin_addr.s_addr); */
     /* Set the current probe port */
     data.dest->sa_in.sin_port = htons(data.port);
 
-    bytes = sendto(data.fd, data.data, data.data_len, 0, &data.dest->sa, sizeof(struct sockaddr));
+    bytes = sendto(data.fd_tx, data.data, data.data_len, 0, &data.dest->sa, sizeof(struct sockaddr));
     if (bytes < 0) {
         if (errno != EMSGSIZE && errno != EHOSTUNREACH) {
             perror("sendto");
@@ -212,7 +208,7 @@ static int recv_probe(struct probes *ps, struct probe_range range)
     struct udphdr *orig_udp_hdr;
     struct probe *p;
 
-    bytes = recvfrom(data.fd_err, buf, sizeof(buf), 0, &from.sa, &slen);
+    bytes = recvfrom(data.fd_rx, buf, sizeof(buf), 0, &from.sa, &slen);
     if (bytes <= 0) {
         perror("recvfrom");
         printf("Error: %d\n", errno);
@@ -301,12 +297,12 @@ int def_recv_probe(struct probes *ps, int timeout, struct probe_range range)
     struct timeval tim;
     unsigned int pos;
 
-    nfds = data.fd_err + 1;
+    nfds = data.fd_rx + 1;
     pos = range.min;
     while (pos < range.max) {
         /* This values are modified in select() so must be re-initialized in each call */
         FD_ZERO(&readfds);
-        FD_SET(data.fd_err, &readfds);
+        FD_SET(data.fd_rx, &readfds);
 
         tim.tv_sec = timeout;
         tim.tv_usec = 0;
