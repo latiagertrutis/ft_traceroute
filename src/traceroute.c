@@ -238,7 +238,7 @@ static char *addr2str(sockaddr_any *addr)
 static void print_header(traceroute *trc)
 {
 
-    printf ("traceroute to %s (%s), %u hops max, %zu byte packets",
+    printf ("ft_traceroute to %s (%s), %u hops max, %zu byte packets",
             trc->dest.canonname, addr2str(&trc->dest.addr), trc->max_hops, trc->pkt_len);
     fflush (stdout);
 }
