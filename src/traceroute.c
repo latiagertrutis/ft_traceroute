@@ -54,6 +54,8 @@ typedef struct traceroute_stat_s {
 
 typedef struct traceroute_mode_s {
     mode_id id;
+    size_t header_len;
+    bool raw_mode;
     int (*init) (sockaddr_any *dest, size_t data_len);
     int (*send_probe) (struct probes *ps, int ttl);
     int (*recv_probe) (struct probes *ps, int timeout, struct probe_range range);
@@ -71,10 +73,9 @@ typedef struct traceroute_s {
 } traceroute;
 
 /* Prototypes */
-static int init_mode(trc_mode * mode, mode_id id);
+static int select_mode(trc_mode * mode, mode_id id);
 static error_t parser(int key, char *arg, struct argp_state *stat);
 static int init_addr(host *host);
-static int init_mode(trc_mode * mode, mode_id id);
 
 /* Globals */
 volatile bool isr_done = false;
@@ -96,11 +97,13 @@ static void traceroute_sigint_handler(int signal)
     isr_done = true;
 }
 
-static int init_mode(trc_mode * mode, mode_id id)
+static int select_mode(trc_mode * mode, mode_id id)
 {
     switch (id) {
     case TRC_DEFAULT:
         mode->id = TRC_DEFAULT;
+        mode->header_len = sizeof(struct udphdr);
+        mode->raw_mode = true;
         mode->init  = def_init;
         mode->send_probe = def_send_probe;
         mode->recv_probe = def_recv_probe;
@@ -342,7 +345,7 @@ int main(int argc, char** argv)
 {
     int ret = 0;
     mode_id id = TRC_DEFAULT;
-    size_t data_len = 0;
+    size_t data_len = 0, iphdr_len;
     trc_mode mode;
     traceroute trc = {
         .dest = {NULL, NULL, {}},
@@ -355,23 +358,29 @@ int main(int argc, char** argv)
 
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    if (trc.pkt_len < 0) {
-        /* TODO: Move sizeof(struct udphdr) to specific moduele, add a variable of header lenght to manage icmp case which will have no udp header */
-        data_len = DEF_DATA_LEN - sizeof(struct udphdr);
-        trc.pkt_len = sizeof(struct iphdr) + sizeof(struct udphdr) + data_len;
-    }
-    else if (trc.pkt_len >= (ssize_t)(sizeof(struct iphdr) + sizeof(struct udphdr))) {
-        data_len = trc.pkt_len - sizeof(struct iphdr) - sizeof(struct udphdr);
-    }
-
     if (init_addr(&trc.dest) != 0) {
         fprintf(stderr, "Error: init_addr()\n");
         exit(EXIT_FAILURE);
     }
 
-    if (init_mode(&mode, id) != 0) {
+    if (select_mode(&mode, id) != 0) {
         ret = EXIT_FAILURE;
         goto exit_addr;
+    }
+
+    /* Add iphdr to the packet len if we are reading from a raw socket */
+    iphdr_len = mode.raw_mode ? sizeof(struct iphdr) : 0;
+    if (trc.pkt_len < 0) {
+        data_len = DEF_DATA_LEN - mode.header_len;
+        trc.pkt_len =  iphdr_len + mode.header_len + data_len;
+    }
+    else if (trc.pkt_len >= (ssize_t)(iphdr_len + mode.header_len)) {
+        data_len = trc.pkt_len - iphdr_len - mode.header_len;
+    }
+    else {
+        printf("Error: Packet lenght specified is less than %ld\n", iphdr_len + mode.header_len);
+        ret = EXIT_FAILURE;
+        goto exit_mode;
     }
 
     if (mode.init(&trc.dest.addr, data_len) != 0) {
