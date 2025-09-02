@@ -26,6 +26,7 @@
 #include <netinet/udp.h>
 
 
+#include "mod-internal.h"
 #include "probe.h"
 #include "utils.h"
 #include "ip_utils.h"
@@ -194,7 +195,7 @@ int def_send_probe(struct probes * ps, int ttl)
 
 /* Receive probe, only valid probes that are within the range, return message
  * status and idx of the probe received */
-static int recv_probe(struct probes *ps, struct probe_range range)
+static int rcv_and_check_udp(struct probes *ps, struct probe_range range)
 {
     /* max_mtu  = 1500 bytes */
     uint8_t buf[1500];
@@ -287,49 +288,7 @@ static int recv_probe(struct probes *ps, struct probe_range range)
     return 0;
 }
 
-/* TODO: We do not want to see if every probe has a response, is one of the porbes of a given hop (3 probes) is answered this is enough, so we should be waiting  hops not porbes. The only linear variable is the port, some probes may not be responded, but if one in the hop is, the hop is done. */
-
-/* If final probe is read matk probes as done, oterwise, return last pos. Pos can be greater than range.max since the last probe in the range can validate its hop which can contain more probes. If that is the case the next iteration should start from the next hop. */
 int def_recv_probe(struct probes *ps, int timeout, struct probe_range range)
 {
-    int nfds, ready, ret;
-    fd_set readfds;
-    struct timeval tim;
-    unsigned int pos;
-
-    nfds = data.fd_rx + 1;
-    pos = range.min;
-    while (pos < range.max) {
-        /* This values are modified in select() so must be re-initialized in each call */
-        FD_ZERO(&readfds);
-        FD_SET(data.fd_rx, &readfds);
-
-        tim.tv_sec = timeout;
-        tim.tv_usec = 0;
-
-        ready = select(nfds, &readfds, NULL, NULL, &tim);
-        if (ready < 0) {
-            return -1;
-        }
-
-        if (ready == 0) {
-            /* timeout */
-            /* If timeout occured,  probes in this range will not have a recv_time, meaning they are expired. Return the max position reached. If this position is less than the max we know there are some timeouts */
-            return pos;
-        }
-
-        /* only one fd set */
-        ret = recv_probe(ps, range);
-        if (ret < 0) {
-            return -1;
-        }
-
-        pos += ret;
-
-        if (ps->done) {
-            return pos;
-        }
-    }
-
-    return pos;
+    return select_probes(data.fd_rx, ps, timeout, range, rcv_and_check_udp);
 }

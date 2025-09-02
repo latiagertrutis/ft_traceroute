@@ -2,7 +2,7 @@
 
 TARGET = ft_traceroute
 
-SRC = $(addprefix src/,traceroute.c mod-default.c mod-icmp.c utils.c ip_utils.c probe.c)
+SRC = $(addprefix src/,traceroute.c mod-default.c mod-generic.c utils.c ip_utils.c probe.c)
 OBJ = $(SRC:.c=.o)
 DEP = $(SRC:.c=.d)
 
