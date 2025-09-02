@@ -4,7 +4,7 @@
 
 /* If final probe is read matk probes as done, oterwise, return last pos. Pos can be greater than range.max since the last probe in the range can validate its hop which can contain more probes. If that is the case the next iteration should start from the next hop. */
 int select_probes(int fd, struct probes *ps, int timeout, struct probe_range range,
-                  int (*rcv_and_check_msg)(struct probes *, struct probe_range))
+                  int (*rcv_and_check_msg)(int, struct probes *, struct probe_range))
 {
     int nfds, ready, ret;
     fd_set readfds;
@@ -33,7 +33,7 @@ int select_probes(int fd, struct probes *ps, int timeout, struct probe_range ran
         }
 
         /* only one fd set */
-        ret = rcv_and_check_msg(ps, range);
+        ret = rcv_and_check_msg(fd, ps, range);
         if (ret < 0) {
             return -1;
         }

@@ -195,7 +195,7 @@ int def_send_probe(struct probes * ps, int ttl)
 
 /* Receive probe, only valid probes that are within the range, return message
  * status and idx of the probe received */
-static int rcv_and_check_udp(struct probes *ps, struct probe_range range)
+static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range)
 {
     /* max_mtu  = 1500 bytes */
     uint8_t buf[1500];
@@ -209,7 +209,7 @@ static int rcv_and_check_udp(struct probes *ps, struct probe_range range)
     struct udphdr *orig_udp_hdr;
     struct probe *p;
 
-    bytes = recvfrom(data.fd_rx, buf, sizeof(buf), 0, &from.sa, &slen);
+    bytes = recvfrom(fd, buf, sizeof(buf), 0, &from.sa, &slen);
     if (bytes <= 0) {
         perror("recvfrom");
         printf("Error: %d\n", errno);

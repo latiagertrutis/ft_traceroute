@@ -1,12 +1,19 @@
+#include <bits/types/struct_iovec.h>
 #include <netinet/in.h>
+#include <netinet/ip_icmp.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <stdio.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 
+#include "mod-internal.h"
 #include "ip_utils.h"
 #include "probe.h"
 
@@ -17,6 +24,7 @@ struct def_data {
     uint16_t id;
     int last_ttl;
     size_t data_len;
+    uint16_t seq;
 };
 
 static struct def_data data = {0};
@@ -61,13 +69,14 @@ static uint16_t get_socket_id(int fd)
     return getpid() &  0xffff;
 }
 
-int def_init(sockaddr_any *dest, size_t data_len)
+int icmp_init(sockaddr_any *dest, size_t data_len)
 {
     size_t i;
     int ret = 0;
 
     data.dest = dest;
     data.data_len = data_len;
+    data.seq = 1;
     /* Allocate the data */
     /* TODO: Free this memory at the end of the program */
     if (data_len > 0) {
@@ -93,8 +102,6 @@ int def_init(sockaddr_any *dest, size_t data_len)
     /* Intitalize the identity for the icmp messages */
     data.id = get_socket_id(data.fd);
 
-    /* TODO: add to poll */
-
     return ret;
 
 error_data:
@@ -102,9 +109,22 @@ error_data:
     return ret;
 }
 
+void icmp_clean()
+{
+    free(data.data);
+    close(data.fd);
+}
 
 int icmp_send_probe(struct probes * ps, int ttl)
 {
+    ssize_t bytes;
+    struct icmp *pkt = (struct icmp *)data.data;
+    struct probe *p = get_probe(ps, data.seq - 1);
+
+    if (p == NULL) {
+        return -1;
+    }
+
     if (ttl != data.last_ttl) {
         if (set_ttl(data.fd, ttl) != 0) {
             return  -1;
@@ -112,16 +132,108 @@ int icmp_send_probe(struct probes * ps, int ttl)
         data.last_ttl = ttl;
     }
 
+    *pkt = (struct icmp) {
+        .icmp_type = ICMP_ECHO,
+        .icmp_code = 0,
+        .icmp_cksum = 0,
+        .icmp_id = htons(data.id),
+        .icmp_seq = htons(data.seq),
 
-    return 0;
+        /* TODO: In dgram sockets checksum is computed by kernel */
+    };
+
+    gettimeofday(&p->sent_time, NULL);
+
+    bytes = send(data.fd, data.data, data.data_len, 0);
+    if (bytes < 0) {
+        if (errno == ENOBUFS || errno == EAGAIN) {
+            return bytes;
+        }
+        if (errno == EMSGSIZE || errno == EHOSTUNREACH) {
+            return 0;    /*  recverr will say more...  */
+        }
+        perror("send");	/*  not recoverable   */
+    }
+
+    data.seq++;
+
+    return bytes;
 }
 
-int icmp_recv_probe(void)
+static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range range)
 {
-    return 0;
+    ssize_t bytes;
+    sockaddr_any from;
+    uint8_t control[1024];
+    uint8_t buf[1500];
+    struct probe *p;
+    struct iovec iov = {};
+    struct msghdr msg = {};
+    struct icmp *icmp;
+
+    (void) range;
+    /* Init msg struct */
+    iov = (struct iovec) {
+        .iov_base = buf,
+        .iov_len = sizeof(buf),
+    };
+
+    msg = (struct msghdr) {
+        .msg_name = &from,
+        .msg_namelen = sizeof(sockaddr_any),
+        .msg_control = control,
+        .msg_controllen = sizeof(control),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+
+    bytes = recvmsg(fd, &msg, 0);
+    if (bytes < 0) {
+        perror("recvmsg");
+        return -1;
+    }
+
+    /* Check the message received */
+    if ((size_t)bytes < sizeof(struct icmphdr)) {
+        fprintf(stderr, "ICMP received not long enough %ld", bytes);
+        return -1;
+    }
+
+    icmp = (struct icmp *) buf;
+
+    if (ntohs(icmp->icmp_id) != data.id) {
+        fprintf(stderr, "ICMP id not matching expected/read [%d/%d]",
+                data.id, ntohs(icmp->icmp_id));
+        return -1;
+    }
+
+    p = get_probe(ps, ntohs(icmp->icmp_seq));
+    if (p == NULL) {
+        return -1;
+    }
+
+    if (p->sent_time.tv_sec == 0) {
+        /* Message was not sent */
+        return 0;
+    }
+
+    /* Mark reception of message */
+    gettimeofday(&p->recv_time, NULL);
+
+    /* Store sender address */
+    p->sa.sa.sa_family = AF_INET;
+    p->sa.sa_in.sin_addr.s_addr = from.sa_in.sin_addr.s_addr;
+
+    if (icmp->icmp_type != ICMP_ECHOREPLY) {
+        return 1;
+    }
+
+    ps->done = true;
+
+    return 1;
 }
 
-void icmp_expire_probe(void)
+int icmp_recv_probe(struct probes *ps, int timeout, struct probe_range range)
 {
-
+    return select_probes(data.fd, ps, timeout, range, rcv_and_check_icmp);
 }

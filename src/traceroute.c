@@ -1,6 +1,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -66,6 +67,7 @@ typedef struct traceroute_mode_s {
 typedef struct traceroute_s {
     host dest;
     ssize_t pkt_len;
+    mode_id mode;
     unsigned int probes_per_hop;
     unsigned int sim_probes;
     unsigned int first_hop;
@@ -87,6 +89,7 @@ static struct argp_option options[] = {
     { "queries", 'q', "NUM", 0, "Set the number of probes per each hop", 0},
     { "first", 'f', "NUM", 0, "Start from the specified hop (instead from 1)", 0},
     { "max-hops", 'm', "NUM", 0, "Set the max number of hops (max TTL to be reached)", 0},
+    { "icmp", 'i', 0, 0, "Set the probe method to ICMP", 0},
     {0}
 };
 static struct argp argp = {options, parser, args_doc, doc, NULL, NULL, NULL};
@@ -109,12 +112,15 @@ static int select_mode(trc_mode * mode, mode_id id)
         mode->recv_probe = def_recv_probe;
         mode->clean = def_clean;
         break;
-    /* case TRC_ICMP: */
-    /*     mode->id = TRC_ICMP; */
-    /*     mode->send_probe = icmp_send_probe; */
-    /*     mode->recv_probe = icmp_recv_probe; */
-    /*     mode->expire_probe = icmp_expire_probe; */
-    /*     break; */
+    case TRC_ICMP:
+        mode->id = TRC_ICMP;
+        mode->header_len = sizeof(struct icmphdr);
+        mode->raw_mode = false;
+        mode->init  = icmp_init;
+        mode->send_probe = icmp_send_probe;
+        mode->recv_probe = icmp_recv_probe;
+        mode->clean = icmp_clean;
+        break;
     default:
         /* This should never happen */
         fprintf(stderr, "Error: mode %d does not exist\n", id);
@@ -151,6 +157,9 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
             fprintf(stderr, "Error: Can not set max hops equal to 0\n");
             exit(EXIT_FAILURE);
         }
+        break;
+    case 'i':
+        trc->mode = TRC_ICMP;
         break;
     case ARGP_KEY_ARG:
         switch (stat->arg_num) {
@@ -344,12 +353,12 @@ static int trace(traceroute *trc, trc_mode *mode)
 int main(int argc, char** argv)
 {
     int ret = 0;
-    mode_id id = TRC_DEFAULT;
     size_t data_len = 0, iphdr_len;
     trc_mode mode;
     traceroute trc = {
         .dest = {NULL, NULL, {}},
         .pkt_len = -1,
+        .mode = TRC_DEFAULT,
         .probes_per_hop = DEF_PROBES_PER_HOP,
         .sim_probes = DEF_SIM_PROBES,
         .first_hop = DEF_FIRST_HOP,
@@ -363,7 +372,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    if (select_mode(&mode, id) != 0) {
+    if (select_mode(&mode, trc.mode) != 0) {
         ret = EXIT_FAILURE;
         goto exit_addr;
     }
