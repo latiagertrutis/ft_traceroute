@@ -284,7 +284,7 @@ static void print_probes(struct probes *ps, struct probe_range range, int probes
             printf("\n%2u ", ttl);
         }
 
-        if (p->sa.sa.sa_family == 0) {
+        if (p->sa.sa.sa_family != AF_INET) {
             printf (" *");
             continue;
         }
@@ -296,6 +296,11 @@ static void print_probes(struct probes *ps, struct probe_range range, int probes
 
         /* If sa_family != 0 means that there has been a response */
         printf ("  %.3f ms", diff_timeval(p->sent_time, p->recv_time));
+
+        /* TODO continue here print the last messgaes from the section */
+        if (p->final == true) {
+            return;
+        }
 
         prev_addr = &p->sa;
     }
@@ -389,13 +394,13 @@ int main(int argc, char** argv)
     else {
         printf("Error: Packet lenght specified is less than %ld\n", iphdr_len + mode.header_len);
         ret = EXIT_FAILURE;
-        goto exit_mode;
+        goto exit_addr;
     }
 
     if (mode.init(&trc.dest.addr, data_len) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
-        goto exit_mode;
+        goto exit_addr;
     }
 
     if (trace(&trc, &mode) != 0) {

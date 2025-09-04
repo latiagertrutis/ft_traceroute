@@ -1,6 +1,8 @@
-#include <bits/types/struct_iovec.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
+#include <arpa/inet.h>
+#include <linux/errqueue.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -27,11 +29,12 @@ struct def_data {
     uint16_t seq;
 };
 
-static struct def_data data = {0};
+static struct def_data data = {};
 
 static int init_socket()
 {
     struct protoent *proto;
+    int one = 1;
 
     proto = getprotobyname("icmp");
     if (proto == NULL) {
@@ -46,7 +49,9 @@ static int init_socket()
         return -1;
     }
 
-    /* TODO: Activate recverror? */
+    if (setsockopt(data.fd, SOL_IP, IP_RECVERR, &one, sizeof(one)) < 0) {
+        perror("setsockopt IP_RECVERR");
+    }
 
     if (connect(data.fd, &data.dest->sa, sizeof(struct sockaddr)) < 0) {
         perror("connect");
@@ -170,6 +175,8 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
     struct iovec iov = {};
     struct msghdr msg = {};
     struct icmp *icmp;
+    struct cmsghdr *cmsg;
+    struct sock_extended_err *ee = NULL;
 
     (void) range;
     /* Init msg struct */
@@ -187,10 +194,15 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
         .msg_iovlen = 1,
     };
 
-    bytes = recvmsg(fd, &msg, 0);
+    /* Try first to read the error queue (most common case) */
+    bytes = recvmsg(fd, &msg, MSG_ERRQUEUE);
     if (bytes < 0) {
-        perror("recvmsg");
-        return -1;
+        /* If not, read the normal queue that should be the final case */
+        bytes = recvmsg(fd, &msg, 0);
+        if (bytes < 0) {
+            perror("recvmsg");
+            return -1;
+        }
     }
 
     /* Check the message received */
@@ -207,7 +219,7 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
         return -1;
     }
 
-    p = get_probe(ps, ntohs(icmp->icmp_seq));
+    p = get_probe(ps, ntohs(icmp->icmp_seq) - 1);
     if (p == NULL) {
         return -1;
     }
@@ -220,15 +232,37 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
     /* Mark reception of message */
     gettimeofday(&p->recv_time, NULL);
 
-    /* Store sender address */
-    p->sa.sa.sa_family = AF_INET;
-    p->sa.sa_in.sin_addr.s_addr = from.sa_in.sin_addr.s_addr;
+    /* Parse CMSG */
+    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        void *ptr = CMSG_DATA(cmsg);
+
+        if (ptr == NULL) { continue; }
+
+        switch (cmsg->cmsg_level) {
+        case SOL_SOCKET:
+            if (cmsg->cmsg_type == SO_TIMESTAMP) {
+                p->recv_time = *(struct timeval *)ptr;
+            }
+            break;
+        case SOL_IP:
+            if (cmsg->cmsg_type == IP_RECVERR) {
+                ee = (struct sock_extended_err *)ptr;
+                memcpy(&p->sa, SO_EE_OFFENDER(ee), sizeof(p->sa));
+            }
+            break;
+        }
+    }
+
+    if (ee == NULL) {
+        memcpy(&p->sa, &from, sizeof(p->sa.sa));
+    }
 
     if (icmp->icmp_type != ICMP_ECHOREPLY) {
         return 1;
     }
 
     ps->done = true;
+    p->final = true;
 
     return 1;
 }

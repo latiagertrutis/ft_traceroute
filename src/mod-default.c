@@ -45,7 +45,7 @@ struct def_data {
 
 /* Main probe object for this run. */
 /* TODO: Check if it is going to be re-used so it needs to be malloc in init */
-static struct def_data data = {0};
+static struct def_data data = {};
 
 static int init_tx_socket(void)
 {
@@ -281,6 +281,7 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
     case TRC_MSG_FINAL:
         /* TODO: print something? */
         ps->done = true;
+        p->final = true;
         /* printf("Message Final\n"); */
         return 1;
     }
