@@ -86,6 +86,7 @@ volatile bool isr_done = false;
 static char doc[] = "Track packet hops over IP";
 static char args_doc[] = "HOST [PACKET_LEN]";
 static struct argp_option options[] = {
+    { "help", 'h', 0, 0, "Display this help menu", 0},
     { "queries", 'q', "NUM", 0, "Set the number of probes per each hop", 0},
     { "first", 'f', "NUM", 0, "Start from the specified hop (instead from 1)", 0},
     { "max-hops", 'm', "NUM", 0, "Set the max number of hops (max TTL to be reached)", 0},
@@ -161,6 +162,9 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     case 'i':
         trc->mode = TRC_ICMP;
         break;
+    case 'h':
+        argp_state_help(stat, stat->out_stream, ARGP_HELP_STD_HELP);
+        break;
     case ARGP_KEY_ARG:
         switch (stat->arg_num) {
         case 0:
@@ -208,7 +212,7 @@ static int init_addr(host *host)
 
     ret = getaddrinfo(host->name, NULL, &hints, &res);
     if (ret != 0) {
-        fprintf(stderr, "Error: getaddrinfo(): %d\n", ret);
+        fprintf(stderr, "Error: %s: Name or service not known\n", host->name);
         return -1;
     }
 
@@ -346,6 +350,7 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         if (ps->done == true || isr_done == true) {
             start = end; // Finish
+            printf("\n");
             continue;
         }
     }
@@ -373,7 +378,6 @@ int main(int argc, char** argv)
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
     if (init_addr(&trc.dest) != 0) {
-        fprintf(stderr, "Error: init_addr()\n");
         exit(EXIT_FAILURE);
     }
 
