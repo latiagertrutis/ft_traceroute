@@ -199,7 +199,9 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
 {
     /* max_mtu  = 1500 bytes */
     uint8_t buf[1500];
+    uint16_t chksum;
     uint8_t *icmp_pkg;
+    size_t icmp_len;
     sockaddr_any from;
     ssize_t bytes;
     unsigned int port, idx;
@@ -228,13 +230,24 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
         return 0;
     }
 
+    icmp_len = bytes - (icmp_pkg - buf);
     icmp_hdr = (struct icmphdr *)icmp_pkg;
     orig_ip_hdr = (struct iphdr *)(icmp_pkg + sizeof(struct icmphdr));
     orig_udp_hdr = (struct udphdr *)(icmp_pkg + sizeof(struct icmphdr) + (orig_ip_hdr->ihl << 2));
 
+    /* Check that the icmp package is not corrupted */
+    chksum = icmp_hdr->checksum;
+    icmp_hdr->checksum = 0;
+    icmp_hdr->checksum = calc_icmp_checksum((const uint16_t *)icmp_pkg, icmp_len);
+    if (icmp_hdr->checksum != chksum) {
+        fprintf(stderr, "ICMP checksum did not match [%x/%x]\n",
+                chksum, icmp_hdr->checksum);
+        return 0;
+    }
+
     /* Check the original adress received matches the destination address */
     if (orig_ip_hdr->daddr != data.dest->sa_in.sin_addr.s_addr) {
-        printf("drop in address\n");
+        fprintf(stderr, "Destination and original addresses do not match\n");
         return 0;
     }
 
@@ -243,7 +256,7 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
     idx = port - DEF_START_PORT;
     if (port < range.min + DEF_START_PORT ||
         port >= range.max + DEF_START_PORT) {
-        printf("drop in port\n");
+        fprintf(stderr, "ICMP port not matching %d\n", port);
         return 0;
     }
 
@@ -251,6 +264,7 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
     if (p == NULL) {
         return -1;
     }
+
     if (p->sent_time.tv_sec == 0) {
         /* Message was not sent */
         return 0;

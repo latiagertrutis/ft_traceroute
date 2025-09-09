@@ -297,9 +297,9 @@ static void print_probes(struct probes *ps, struct probe_range range, int probes
         /* If sa_family != 0 means that there has been a response */
         printf ("  %.3f ms", diff_timeval(p->sent_time, p->recv_time));
 
-        /* TODO continue here print the last messgaes from the section */
         if (p->final == true) {
-            return;
+            /* Print the lasts of this set of tests */
+            range.max = MIN(i + probes_per_hop  - probe_module, range.max);
         }
 
         prev_addr = &p->sa;

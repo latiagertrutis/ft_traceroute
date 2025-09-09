@@ -131,3 +131,26 @@ int set_ttl(int fd, int ttl)
 
     return 0;
 }
+
+
+/* RFC 792: The checksum is the 16-bit ones's complement of the one's complement
+ * sum of the ICMP message starting with the ICMP Type. For computing the
+ * checksum , the checksum field should be zero. */
+uint16_t calc_icmp_checksum(const uint16_t *pkt, size_t len)
+{
+    uint32_t sum = 0;
+    const uint16_t *pkt_p = pkt;
+
+    for (; len > 1; pkt_p++, len -= 2) {
+        sum += *pkt_p;
+    }
+
+    if (len == 1) {
+        sum += *(uint8_t *)pkt;
+    }
+
+    sum = (sum >> 16) + (sum & 0xffff);	/* First fold */
+    sum += (sum >> 16); /* Add carry if any */
+
+    return ~sum;
+}

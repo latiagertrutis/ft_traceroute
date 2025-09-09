@@ -205,16 +205,21 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
         }
     }
 
-    /* Check the message received */
+    /* Note: No need to check the error icmp message, the kernel takes care of any
+     * check, and puts the original icmp messgae sent (in the payload of the icmp
+     * error msg) in the iovec structure */
+
+    /* Check the original message received */
     if ((size_t)bytes < sizeof(struct icmphdr)) {
-        fprintf(stderr, "ICMP received not long enough %ld", bytes);
+        fprintf(stderr, "ICMP received not long enough %ld\n", bytes);
         return -1;
     }
 
     icmp = (struct icmp *) buf;
 
+    /* Check original id */
     if (ntohs(icmp->icmp_id) != data.id) {
-        fprintf(stderr, "ICMP id not matching expected/read [%d/%d]",
+        fprintf(stderr, "ICMP id not matching expected/read [%d/%d]\n",
                 data.id, ntohs(icmp->icmp_id));
         return -1;
     }
