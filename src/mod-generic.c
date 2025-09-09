@@ -6,7 +6,7 @@
 int select_probes(int fd, struct probes *ps, int timeout, struct probe_range range,
                   int (*rcv_and_check_msg)(int, struct probes *, struct probe_range))
 {
-    int nfds, ready, ret;
+    int nfds, ready;
     fd_set readfds;
     struct timeval tim;
     unsigned int pos;
@@ -33,16 +33,15 @@ int select_probes(int fd, struct probes *ps, int timeout, struct probe_range ran
         }
 
         /* only one fd set */
-        ret = rcv_and_check_msg(fd, ps, range);
-        if (ret < 0) {
-            return -1;
+        if (rcv_and_check_msg(fd, ps, range) <= 0) {
+            continue;
         }
-
-        pos += ret;
 
         if (ps->done) {
             return pos;
         }
+
+        pos++;
     }
 
     return pos;

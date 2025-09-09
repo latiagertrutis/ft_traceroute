@@ -26,10 +26,9 @@ struct def_data {
     uint16_t id;
     int last_ttl;
     size_t data_len;
-    uint16_t seq;
 };
 
-static struct def_data data = {};
+static struct def_data data = {0};
 
 static int init_socket()
 {
@@ -81,7 +80,6 @@ int icmp_init(sockaddr_any *dest, size_t data_len)
 
     data.dest = dest;
     data.data_len = data_len;
-    data.seq = 1;
     /* Allocate the data */
     /* TODO: Free this memory at the end of the program */
     if (data_len > 0) {
@@ -120,11 +118,11 @@ void icmp_clean()
     close(data.fd);
 }
 
-int icmp_send_probe(struct probes * ps, int ttl)
+int icmp_send_probe(struct probes * ps, int ttl, unsigned int seq)
 {
     ssize_t bytes;
     struct icmp *pkt = (struct icmp *)data.data;
-    struct probe *p = get_probe(ps, data.seq - 1);
+    struct probe *p = get_probe(ps, seq);
 
     if (p == NULL) {
         return -1;
@@ -142,7 +140,7 @@ int icmp_send_probe(struct probes * ps, int ttl)
         .icmp_code = 0,
         .icmp_cksum = 0,
         .icmp_id = htons(data.id),
-        .icmp_seq = htons(data.seq),
+        .icmp_seq = htons(seq),
 
         /* TODO: In dgram sockets checksum is computed by kernel */
     };
@@ -160,8 +158,6 @@ int icmp_send_probe(struct probes * ps, int ttl)
         perror("send");	/*  not recoverable   */
     }
 
-    data.seq++;
-
     return bytes;
 }
 
@@ -170,6 +166,7 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
     ssize_t bytes;
     sockaddr_any from;
     uint8_t control[1024];
+    unsigned int idx;
     uint8_t buf[1500];
     struct probe *p;
     struct iovec iov = {};
@@ -178,7 +175,6 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
     struct cmsghdr *cmsg;
     struct sock_extended_err *ee = NULL;
 
-    (void) range;
     /* Init msg struct */
     iov = (struct iovec) {
         .iov_base = buf,
@@ -200,7 +196,6 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
         /* If not, read the normal queue that should be the final case */
         bytes = recvmsg(fd, &msg, 0);
         if (bytes < 0) {
-            perror("recvmsg");
             return -1;
         }
     }
@@ -224,14 +219,21 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
         return -1;
     }
 
-    p = get_probe(ps, ntohs(icmp->icmp_seq) - 1);
+    /* Check index within the range */
+    idx = ntohs(icmp->icmp_seq);
+    if (idx < range.min || idx >= range.max) {
+        fprintf(stderr, "Received ICMP outside the range %d\n", idx);
+        return -1;
+    }
+
+    p = get_probe(ps, idx);
     if (p == NULL) {
         return -1;
     }
 
     if (p->sent_time.tv_sec == 0) {
         /* Message was not sent */
-        return 0;
+        return -1;
     }
 
     /* Mark reception of message */
@@ -259,7 +261,7 @@ static int rcv_and_check_icmp(int fd, struct probes *ps, struct probe_range rang
     }
 
     if (ee == NULL) {
-        memcpy(&p->sa, &from, sizeof(p->sa.sa));
+        memcpy(&p->sa, &from, sizeof(sockaddr_any));
     }
 
     if (icmp->icmp_type != ICMP_ECHOREPLY) {

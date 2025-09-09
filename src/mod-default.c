@@ -40,12 +40,11 @@ struct def_data {
     uint8_t *data;
     size_t data_len;
     int last_ttl;
-    uint16_t port; // Next port to use
 };
 
 /* Main probe object for this run. */
 /* TODO: Check if it is going to be re-used so it needs to be malloc in init */
-static struct def_data data = {};
+static struct def_data data = {0};
 
 static int init_tx_socket(void)
 {
@@ -78,17 +77,6 @@ static int init_rx_socket(void)
         perror("bind");
         goto error;
     }
-
-    /* TODO: add this as bonus flag F */
-    /* Default for connection-less sockets is make the user handle MTU */
-    /* opt = IP_PMTUDISC_DONT; */
-    /* if (setsockopt(fd, SOL_IP, IP_MTU_DISCOVER, &opt, sizeof(opt)) < 0) { */
-    /*     perror("setsockopt [IP_MTU_DISCOVER]"); */
-    /*     return -1; */
-    /* } */
-
-
-    /* TODO: Make non blocking socket? */
 
     return 0;
 
@@ -123,9 +111,6 @@ int def_init(sockaddr_any *dest, size_t data_len)
         }
     }
 
-    /* Define starting port */
-    data.port = DEF_START_PORT;
-
     /* Init the transsmission socket. Dgram socket for sending udp packages */
     init_tx_socket();
     if (data.fd_tx < 0) {
@@ -156,11 +141,14 @@ void def_clean()
     close(data.fd_rx);
 }
 
-int def_send_probe(struct probes * ps, int ttl)
+int def_send_probe(struct probes * ps, int ttl, unsigned int seq)
 {
     ssize_t bytes;
-    struct probe *p;
-    /* unsigned int idx = p.port - DEF_START_PORT; */
+    struct probe *p = get_probe(ps, seq);
+
+    if (p == NULL) {
+        return -1;
+    }
 
     if (ttl != data.last_ttl) {
         if (set_ttl(data.fd_tx, ttl) != 0) {
@@ -169,26 +157,21 @@ int def_send_probe(struct probes * ps, int ttl)
         data.last_ttl = ttl;
     }
 
-
-    /* printf("Send to: %d\n", p.dest->sa_in.sin_addr.s_addr); */
     /* Set the current probe port */
-    data.dest->sa_in.sin_port = htons(data.port);
+    data.dest->sa_in.sin_port = htons(DEF_START_PORT + seq);
+
+    gettimeofday(&p->sent_time, NULL);
 
     bytes = sendto(data.fd_tx, data.data, data.data_len, 0, &data.dest->sa, sizeof(struct sockaddr));
     if (bytes < 0) {
-        if (errno != EMSGSIZE && errno != EHOSTUNREACH) {
-            perror("sendto");
+        if (errno == ENOBUFS || errno == EAGAIN) {
             return bytes;
         }
+        if (errno != EMSGSIZE && errno != EHOSTUNREACH) {
+            return bytes;
+        }
+        perror("sendto");
     }
-
-    p = get_probe(ps, data.port - DEF_START_PORT);
-    if (p == NULL) {
-        return -1;
-    }
-    gettimeofday(&p->sent_time, NULL);
-
-    data.port++;
 
     return bytes;
 }
@@ -213,8 +196,6 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
 
     bytes = recvfrom(fd, buf, sizeof(buf), 0, &from.sa, &slen);
     if (bytes <= 0) {
-        perror("recvfrom");
-        printf("Error: %d\n", errno);
         return -1;
     }
 
@@ -253,13 +234,13 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
 
     /* Check that the port is within the range */
     port = ntohs(orig_udp_hdr->dest);
-    idx = port - DEF_START_PORT;
     if (port < range.min + DEF_START_PORT ||
         port >= range.max + DEF_START_PORT) {
         fprintf(stderr, "ICMP port not matching %d\n", port);
         return 0;
     }
 
+    idx = port - DEF_START_PORT;
     p = get_probe(ps, idx);
     if (p == NULL) {
         return -1;

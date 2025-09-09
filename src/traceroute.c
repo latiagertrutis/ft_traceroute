@@ -26,10 +26,11 @@
 #define DEF_SIM_PROBES	16
 #define DEF_FIRST_HOP 1
 #define DEF_MAX_HOPS 30
-#define DEF_DATA_LEN	40	/*  all but IP header...  */
+#define DEF_DATA_LEN	42	/*  all but headers...  */
 #define DEF_START_PORT	33434	/*  start for traditional udp method   */
 #define DEF_UDP_PORT	53	/*  dns   */
 #define DEF_TCP_PORT	80	/*  web   */
+#define DEF_TIMEOUT 5
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -58,7 +59,7 @@ typedef struct traceroute_mode_s {
     size_t header_len;
     bool raw_mode;
     int (*init) (sockaddr_any *dest, size_t data_len);
-    int (*send_probe) (struct probes *ps, int ttl);
+    int (*send_probe) (struct probes *ps, int ttl, unsigned int seq);
     int (*recv_probe) (struct probes *ps, int timeout, struct probe_range range);
     void (*clean) (void);
 } trc_mode;
@@ -68,10 +69,10 @@ typedef struct traceroute_s {
     host dest;
     ssize_t pkt_len;
     mode_id mode;
-    unsigned int probes_per_hop;
-    unsigned int sim_probes;
-    unsigned int first_hop;
-    unsigned int max_hops;
+    int probes_per_hop;
+    int sim_probes;
+    int first_hop;
+    int max_hops;
 } traceroute;
 
 /* Prototypes */
@@ -140,22 +141,26 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     switch (key) {
     case 'q':
         trc->probes_per_hop = atoi(arg);
-        if (trc->probes_per_hop == 0) {
-            fprintf(stderr, "Error: Can not set probes per hop equal to 0\n");
+        if (trc->probes_per_hop <= 0) {
+            fprintf(stderr, "Error: Can not set probes per hop less or equal to 0\n");
             exit(EXIT_FAILURE);
         }
         break;
     case 'f':
         trc->first_hop = atoi(arg);
-        if (trc->first_hop == 0) {
-            fprintf(stderr, "Error: Can not set first hop equal to 0\n");
+        if (trc->first_hop <= 0) {
+            fprintf(stderr, "Error: Can not set first hop less or equal to 0\n");
             exit(EXIT_FAILURE);
         }
         break;
     case 'm':
         trc->max_hops = atoi(arg);
-        if (trc->max_hops == 0) {
-            fprintf(stderr, "Error: Can not set max hops equal to 0\n");
+        if (trc->max_hops <= 0) {
+            fprintf(stderr, "Error: Can not set max hops less or equal to 0\n");
+            exit(EXIT_FAILURE);
+        }
+        if (trc->max_hops > 255) {
+            fprintf(stderr, "Error: Can not set max hops greater than 255\n");
             exit(EXIT_FAILURE);
         }
         break;
@@ -190,6 +195,11 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
         break;
     default:
         return  ARGP_ERR_UNKNOWN;
+    }
+
+    if (trc->first_hop > trc->max_hops) {
+        fprintf(stderr, "Error: First hop can not be greater than max hops\n");
+        exit(EXIT_FAILURE);
     }
 
     return 0;
@@ -339,12 +349,12 @@ static int trace(traceroute *trc, trc_mode *mode)
             int ttl = n / trc->probes_per_hop + 1;
 
             /* Do not check error */
-            mode->send_probe(ps, ttl);
+            mode->send_probe(ps, ttl, n);
         }
 
         start = n;
 
-        mode->recv_probe(ps, 5, range);
+        mode->recv_probe(ps, DEF_TIMEOUT, range);
 
         print_probes(ps, range, trc->probes_per_hop);
 
@@ -363,7 +373,7 @@ static int trace(traceroute *trc, trc_mode *mode)
 int main(int argc, char** argv)
 {
     int ret = 0;
-    size_t data_len = 0, iphdr_len;
+    size_t iphdr_len;
     trc_mode mode;
     traceroute trc = {
         .dest = {NULL, NULL, {}},
@@ -389,19 +399,15 @@ int main(int argc, char** argv)
     /* Add iphdr to the packet len if we are reading from a raw socket */
     iphdr_len = mode.raw_mode ? sizeof(struct iphdr) : 0;
     if (trc.pkt_len < 0) {
-        data_len = DEF_DATA_LEN - mode.header_len;
-        trc.pkt_len =  iphdr_len + mode.header_len + data_len;
+        trc.pkt_len =  iphdr_len + mode.header_len + DEF_DATA_LEN;
     }
-    else if (trc.pkt_len >= (ssize_t)(iphdr_len + mode.header_len)) {
-        data_len = trc.pkt_len - iphdr_len - mode.header_len;
-    }
-    else {
+    else if (trc.pkt_len < (ssize_t)(iphdr_len + mode.header_len)) {
         printf("Error: Packet lenght specified is less than %ld\n", iphdr_len + mode.header_len);
         ret = EXIT_FAILURE;
         goto exit_addr;
     }
 
-    if (mode.init(&trc.dest.addr, data_len) != 0) {
+    if (mode.init(&trc.dest.addr, trc.pkt_len) != 0) {
         fprintf(stderr, "Error: Initializing mode: %s\n", strerror(errno));
         ret = EXIT_FAILURE;
         goto exit_addr;
