@@ -10,6 +10,8 @@ CFLAGS = -g -Wall -Werror -Wextra
 
 CC = gcc
 
+BEAR ?= bear --append --
+
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -23,6 +25,9 @@ endif
 	$(CC) -MM -MT '$(@:.d=.o)' $(CPPFLAGS) $< > $@.$$$$; \
 	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$
+
+%.o: %.c
+	$(BEAR) $(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 include $(DEP)
 
