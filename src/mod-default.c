@@ -31,8 +31,6 @@
 #include "utils.h"
 #include "ip_utils.h"
 
-/* TODO: If this is common, move it to a header */
-
 struct def_data {
     int fd_tx;
     int fd_rx;
@@ -43,7 +41,6 @@ struct def_data {
 };
 
 /* Main probe object for this run. */
-/* TODO: Check if it is going to be re-used so it needs to be malloc in init */
 static struct def_data data = {0};
 
 static int init_tx_socket(void)
@@ -53,9 +50,6 @@ static int init_tx_socket(void)
         perror("socket (udp)");
         return -1;
     }
-
-    /* TODO: Make non blocking socket? */
-
     return 0;
 }
 
@@ -85,10 +79,9 @@ error:
     return -1;
 }
 
-/* TODO: To avoid early optimization, n_probes is used, the idea is to use only
- * the ammount of probes that will be in air simultaneously. Each probe will be
- * identified by its index in the array, and the index will be
- * current_port - default port.Optimize once is ready */
+/* The idea is to use only the ammount of probes that will be
+ * in air simultaneously. Each probe will be identified by its
+ * index in the array, and the index will be current_port - default port. */
 int def_init(sockaddr_any *dest, size_t data_len)
 {
     size_t i;
@@ -97,7 +90,6 @@ int def_init(sockaddr_any *dest, size_t data_len)
     data.dest = dest;
     data.data_len = data_len;
     /* Allocate the data */
-    /* TODO: Free this memory at the end of the program */
     if (data_len > 0) {
         data.data = (uint8_t *)malloc(data_len);
         if (data.data == NULL) {
@@ -199,8 +191,6 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
         return -1;
     }
 
-    /* print_raw_packet_metadata(buf, bytes); */
-
     ip_hdr = (struct iphdr *) buf;
 
     /* We received a raw message, ip header will preceed the icmp package. Check
@@ -226,7 +216,7 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
         return 0;
     }
 
-    /* Check the original adress received matches the destination address */
+    /* Check the original received adress matches the destination address */
     if (orig_ip_hdr->daddr != data.dest->sa_in.sin_addr.s_addr) {
         fprintf(stderr, "Destination and original addresses do not match\n");
         return 0;
@@ -260,24 +250,16 @@ static int rcv_and_check_udp(int fd, struct probes *ps, struct probe_range range
 
     switch (check_icmp_type(icmp_hdr->type, icmp_hdr->code)) {
     case TRC_MSG_DROP:
-        /* TODO: print something? */
-        /* printf("Message Drop\n"); */
         return 0;
     case TRC_MSG_ERROR:
-        /* TODO: print something? */
-        /* printf("Message Error\n"); */
         /* TRC_MSG_ERROR means that probe is for us but icmp code is not what
          * we expect, so, probe is done but hop is not */
         return 1; // increase one pos
     case TRC_MSG_TTL:
-        /* TODO: print something? */
-        /* printf("Message TTL\n"); */
         return 1; // increase one pos
     case TRC_MSG_FINAL:
-        /* TODO: print something? */
         ps->done = true;
         p->final = true;
-        /* printf("Message Final\n"); */
         return 1;
     }
 

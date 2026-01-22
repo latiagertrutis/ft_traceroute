@@ -68,6 +68,7 @@ typedef struct traceroute_mode_s {
 typedef struct traceroute_s {
     host dest;
     ssize_t pkt_len;
+    bool resolve_dns;
     mode_id mode;
     int probes_per_hop;
     int sim_probes;
@@ -91,6 +92,7 @@ static struct argp_option options[] = {
     { "queries", 'q', "NUM", 0, "Set the number of probes per each hop", 0},
     { "first", 'f', "NUM", 0, "Start from the specified hop (instead from 1)", 0},
     { "max-hops", 'm', "NUM", 0, "Set the max number of hops (max TTL to be reached)", 0},
+    { "no-dns", 'n', 0, 0, "Do not resolve IP addresses to their domain names", 0},
     { "icmp", 'i', 0, 0, "Set the probe method to ICMP", 0},
     {0}
 };
@@ -167,6 +169,9 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     case 'i':
         trc->mode = TRC_ICMP;
         break;
+    case 'n':
+        trc->resolve_dns = false;
+        break;
     case 'h':
         argp_state_help(stat, stat->out_stream, ARGP_HELP_STD_HELP);
         break;
@@ -177,7 +182,6 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
             break;
         case 1:
             trc->pkt_len = atoi(arg);
-            // TODO: Maybe check error here
             if (trc->pkt_len > MAX_PACKET_LEN) {
                 fprintf(stderr, "Error: Packet lenght too big: %ld (max is %d)\n", trc->pkt_len,
                         MAX_PACKET_LEN);
@@ -266,7 +270,7 @@ static void print_header(traceroute *trc)
     fflush (stdout);
 }
 
-static void print_addr(sockaddr_any *addr)
+static void print_addr(sockaddr_any *addr, bool resolve_dns)
 {
     char addr_buf[1024] = {};
     char *str;
@@ -275,15 +279,21 @@ static void print_addr(sockaddr_any *addr)
         return;
     }
 
-    /* TODO: add skip FQDN resolution flag */
     str = addr2str(addr);
-    getnameinfo(&addr->sa, sizeof(struct sockaddr),
-                addr_buf, sizeof(addr_buf), 0, 0, NI_NOFQDN);
-    printf (" %s (%s)", addr_buf[0] ? addr_buf : str, str);
+
+    if (resolve_dns) {
+        getnameinfo(&addr->sa, sizeof(struct sockaddr),
+                    addr_buf, sizeof(addr_buf), 0, 0, NI_NOFQDN);
+        printf (" %s (%s)", addr_buf[0] ? addr_buf : str, str);
+    }
+    else {
+        printf (" %s", str);
+    }
 }
 
 /* Print a probe range */
-static void print_probes(struct probes *ps, struct probe_range range, int probes_per_hop)
+static void print_probes(struct probes *ps, struct probe_range range, int probes_per_hop,
+                         bool resolve_dns)
 {
     static sockaddr_any *prev_addr = NULL;
 
@@ -305,7 +315,7 @@ static void print_probes(struct probes *ps, struct probe_range range, int probes
 
         if (probe_module == 0 ||
             equal_addr(&p->sa, prev_addr) == false) {
-            print_addr(&p->sa);
+            print_addr(&p->sa, resolve_dns);
         }
 
         /* If sa_family != 0 means that there has been a response */
@@ -327,10 +337,8 @@ static int trace(traceroute *trc, trc_mode *mode)
     int ret = 0;
     struct probes *ps;
 
-    /* TODO: if probes is not used in this level it can be ofuscated in module level */
     ps = init_probes(trc->max_hops * trc->probes_per_hop);
     if (ps == NULL) {
-        /* TODO: free probes at end */
         return -1;
     }
 
@@ -356,7 +364,7 @@ static int trace(traceroute *trc, trc_mode *mode)
 
         mode->recv_probe(ps, DEF_TIMEOUT, range);
 
-        print_probes(ps, range, trc->probes_per_hop);
+        print_probes(ps, range, trc->probes_per_hop, trc->resolve_dns);
 
         if (ps->done == true || isr_done == true) {
             start = end; // Finish
@@ -379,6 +387,7 @@ int main(int argc, char** argv)
         .dest = {NULL, NULL, {}},
         .pkt_len = -1,
         .mode = TRC_DEFAULT,
+        .resolve_dns = true,
         .probes_per_hop = DEF_PROBES_PER_HOP,
         .sim_probes = DEF_SIM_PROBES,
         .first_hop = DEF_FIRST_HOP,

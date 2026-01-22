@@ -13,7 +13,6 @@ struct probe {
     bool final;
 };
 
-/* TODO: continue here, put probes in trace and pass them to the modules. */
 struct probes {
     bool done;
     unsigned int n_probes;

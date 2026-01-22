@@ -2,7 +2,10 @@
 
 #include "probe.h"
 
-/* If final probe is read matk probes as done, oterwise, return last pos. Pos can be greater than range.max since the last probe in the range can validate its hop which can contain more probes. If that is the case the next iteration should start from the next hop. */
+/* If final probe is read mark probes as done, oterwise, return last pos. Pos can
+ * be greater than range.max since the last probe in the range can validate its
+ * hop which can contain more probes. If that is the case the next iteration
+ * should start from the next hop. */
 int select_probes(int fd, struct probes *ps, int timeout, struct probe_range range,
                   int (*rcv_and_check_msg)(int, struct probes *, struct probe_range))
 {
@@ -27,8 +30,9 @@ int select_probes(int fd, struct probes *ps, int timeout, struct probe_range ran
         }
 
         if (ready == 0) {
-            /* timeout */
-            /* If timeout occured,  probes in this range will not have a recv_time, meaning they are expired. Return the max position reached. If this position is less than the max we know there are some timeouts */
+            /* If timeout occured,  probes in this range will not have a recv_time,
+             * meaning they are expired. Return the max position reached. If this
+             * position is less than the max we know there are some timeouts */
             return pos;
         }
 

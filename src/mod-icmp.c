@@ -81,7 +81,6 @@ int icmp_init(sockaddr_any *dest, size_t data_len)
     data.dest = dest;
     data.data_len = data_len;
     /* Allocate the data */
-    /* TODO: Free this memory at the end of the program */
     if (data_len > 0) {
         data.data = (uint8_t *)malloc(data_len);
         if (data.data == NULL) {
@@ -141,8 +140,7 @@ int icmp_send_probe(struct probes * ps, int ttl, unsigned int seq)
         .icmp_cksum = 0,
         .icmp_id = htons(data.id),
         .icmp_seq = htons(seq),
-
-        /* TODO: In dgram sockets checksum is computed by kernel */
+        /* In dgram sockets checksum is computed by kernel */
     };
 
     gettimeofday(&p->sent_time, NULL);
