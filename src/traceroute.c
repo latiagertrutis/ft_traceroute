@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -79,7 +80,7 @@ typedef struct traceroute_s {
 /* Prototypes */
 static int select_mode(trc_mode * mode, mode_id id);
 static error_t parser(int key, char *arg, struct argp_state *stat);
-static int init_addr(host *host);
+static int init_addr(host *host, mode_id id);
 
 /* Globals */
 volatile bool isr_done = false;
@@ -209,16 +210,25 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     return 0;
 }
 
-static int init_addr(host *host)
+static int init_addr(host *host, mode_id id)
 {
     int ret;
     struct addrinfo hints = {0};
     struct addrinfo *res, *tmp;
 
     hints.ai_family = AF_INET;
-    //TOOD: Change this when adding other protocols
-    hints.ai_protocol = IPPROTO_UDP;
+    // Set to 0 so all types are valid. POSIX does not allow ICMP + DGRAM but linux does
+    hints.ai_socktype = 0;
     hints.ai_flags = AI_CANONNAME;
+
+    switch (id) {
+    case TRC_DEFAULT:
+        hints.ai_protocol = IPPROTO_UDP;
+        break;
+    case TRC_ICMP:
+        hints.ai_protocol = IPPROTO_ICMP;
+        break;
+    }
 
     if (host->name ==  NULL) {
         return -1;
@@ -226,7 +236,7 @@ static int init_addr(host *host)
 
     ret = getaddrinfo(host->name, NULL, &hints, &res);
     if (ret != 0) {
-        fprintf(stderr, "Error: %s: Name or service not known\n", host->name);
+        fprintf(stderr, "Error: %s: Name or service not known [Code: %d]\n", host->name, ret);
         return -1;
     }
 
@@ -254,12 +264,7 @@ static int init_addr(host *host)
 
 static char *addr2str(sockaddr_any *addr)
 {
-    static char addr_buf[INET_ADDRSTRLEN]; // NULL
-    /* Get string of the address name */
-    getnameinfo(&addr->sa, sizeof(struct sockaddr),
-                addr_buf, sizeof(addr_buf), 0, 0, NI_NUMERICHOST);
-
-    return addr_buf;
+    return inet_ntoa(addr->sa_in.sin_addr);
 }
 
 static void print_header(traceroute *trc)
@@ -272,7 +277,6 @@ static void print_header(traceroute *trc)
 
 static void print_addr(sockaddr_any *addr, bool resolve_dns)
 {
-    char addr_buf[1024] = {};
     char *str;
 
     if (addr->sa.sa_family == 0) {
@@ -282,6 +286,8 @@ static void print_addr(sockaddr_any *addr, bool resolve_dns)
     str = addr2str(addr);
 
     if (resolve_dns) {
+        char addr_buf[1024] = {};
+
         getnameinfo(&addr->sa, sizeof(struct sockaddr),
                     addr_buf, sizeof(addr_buf), 0, 0, NI_NOFQDN);
         printf (" %s (%s)", addr_buf[0] ? addr_buf : str, str);
@@ -396,7 +402,7 @@ int main(int argc, char** argv)
 
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
-    if (init_addr(&trc.dest) != 0) {
+    if (init_addr(&trc.dest, trc.mode) != 0) {
         exit(EXIT_FAILURE);
     }
 
