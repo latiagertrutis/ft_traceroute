@@ -27,11 +27,12 @@
 #define DEF_SIM_PROBES	16
 #define DEF_FIRST_HOP 1
 #define DEF_MAX_HOPS 30
-#define DEF_DATA_LEN	42	/*  all but headers...  */
+#define DEF_DATA_LEN	32	/*  all but headers...  */
 #define DEF_START_PORT	33434	/*  start for traditional udp method   */
 #define DEF_UDP_PORT	53	/*  dns   */
 #define DEF_TCP_PORT	80	/*  web   */
 #define DEF_TIMEOUT 5
+#define EXIT_INCORRECT_USAGE 2
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -403,7 +404,7 @@ int main(int argc, char** argv)
     argp_parse(&argp, argc, argv, 0, NULL, &trc);
 
     if (init_addr(&trc.dest, trc.mode) != 0) {
-        exit(EXIT_FAILURE);
+        exit(EXIT_INCORRECT_USAGE);
     }
 
     if (select_mode(&mode, trc.mode) != 0) {
@@ -411,15 +412,12 @@ int main(int argc, char** argv)
         goto exit_addr;
     }
 
-    /* Add iphdr to the packet len if we are reading from a raw socket */
-    iphdr_len = mode.raw_mode ? sizeof(struct iphdr) : 0;
+    iphdr_len = sizeof(struct iphdr);
     if (trc.pkt_len < 0) {
         trc.pkt_len =  iphdr_len + mode.header_len + DEF_DATA_LEN;
     }
     else if (trc.pkt_len < (ssize_t)(iphdr_len + mode.header_len)) {
-        printf("Error: Packet lenght specified is less than %ld\n", iphdr_len + mode.header_len);
-        ret = EXIT_FAILURE;
-        goto exit_addr;
+        trc.pkt_len =  iphdr_len + mode.header_len; // The minimum lenght
     }
 
     if (mode.init(&trc.dest.addr, trc.pkt_len) != 0) {
