@@ -145,8 +145,8 @@ static error_t parser(int key, char *arg, struct argp_state *stat)
     switch (key) {
     case 'q':
         trc->probes_per_hop = atoi(arg);
-        if (trc->probes_per_hop <= 0) {
-            fprintf(stderr, "Error: Can not set probes per hop less or equal to 0\n");
+        if (trc->probes_per_hop <= 0 || trc->probes_per_hop > 10) {
+            fprintf(stderr, "Error: Wrong number of probes-per-hup, min 1, max 10\n");
             exit(EXIT_FAILURE);
         }
         break;
